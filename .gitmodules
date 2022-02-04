@@ -1,3 +1,6 @@
 [submodule "thirdparty/lexy"]
 	path = thirdparty/lexy
 	url = https://github.com/foonathan/lexy.git
+[submodule "thirdparty/linenoise"]
+	path = thirdparty/linenoise
+	url = https://github.com/antirez/linenoise.git
