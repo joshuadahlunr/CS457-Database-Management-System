@@ -17,6 +17,12 @@ namespace sql {
 	template<typename T>
 	struct Wildcard: public std::optional<T>{
 		using std::optional<T>::optional;
+
+		// Query if the wildcard (everything) was selected
+		bool all() { return !this->has_value(); }
+		// Implicitly convert to the stored value
+		operator T() { return this->value(); } // TODO: Remove?
+		operator T&() { return this->value(); }
 	};
 
 	// Struct representing a DataType
@@ -45,6 +51,10 @@ namespace sql {
 		std::string name;
 		// Type of data stored in this column
 		DataType type;
+
+		// Modified constructors to offload some work from the SQL parser
+		Column(Table* table = nullptr, std::string name = "", DataType type = {}): table(table), name(name), type(type) {}
+		Column(std::string name, DataType type = {}): table(nullptr), name(name), type(type) {}
 	};
 
 
@@ -107,6 +117,15 @@ namespace sql {
 			// Smart pointer wrapper around a transaction
 			using ptr = std::unique_ptr<ast::Transaction>;
 
+			// Types of Transactions (with different signatures)
+			enum Type {
+				Base,
+				QueryTable,
+				CreateTable,
+				AlterTable,
+			};
+
+			// Actions a transaction can be performing
 			enum Action {
 				Invalid,
 				Use,
@@ -115,6 +134,7 @@ namespace sql {
 				Alter,
 				Select,
 
+				// Actions specific to table alters // TODO: Should we consildate these into add and drop?
 				Add,
 				Remove,
 			};
@@ -134,6 +154,8 @@ namespace sql {
 				std::string name;
 			};
 
+			// The type of transaction (used to determine how to downcast)
+			Type type;
 			// The action to be taken by this command
 			Action action;
 			// The target of this command
@@ -157,7 +179,7 @@ namespace sql {
 			// The action to be taken on a column of the table
 			Action alterAction;
 			// The column of the table to be altered
-			Column toAlter;  // Remove only uses the name, ignoring the datatype
+			Column alterTarget;  // Remove only uses the name, ignoring the datatype
 		};
 
 	} // ast
