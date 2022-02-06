@@ -3,6 +3,7 @@
 
 #include <string>
 #include <filesystem>
+#include <array>
 #include <vector>
 #include <map>
 #include <optional>
@@ -132,12 +133,15 @@ namespace sql {
 				Create,
 				Drop,
 				Alter,
-				Select,
+				Query,
 
 				// Actions specific to table alters // TODO: Should we consildate these into add and drop?
 				Add,
 				Remove,
+
+				MAX
 			};
+			static const std::array<std::string, Action::MAX> ActionNames; //= {"Invalid", "Use", "Create", "Drop", "Alter", "Query", "Add", "Remove"};
 
 			// Struct which represents the target of this command
 			struct Target {
@@ -146,7 +150,10 @@ namespace sql {
 					Database,
 					Table,
 					Column,
+
+					MAX
 				};
+				static const std::array<std::string, Type::MAX> TypeNames; //= {"Invalid", "Database", "Table", "Column"};
 
 				// Type of target
 				Type type;
@@ -182,8 +189,10 @@ namespace sql {
 			Column alterTarget;  // Remove only uses the name, ignoring the datatype
 		};
 
+		// Memory backing for the enum name arrays
+		inline const std::array<std::string, Transaction::Action::MAX> Transaction::ActionNames = {"Invalid", "Use", "Create", "Drop", "Alter", "Query", "Add", "Remove"};
+		inline const std::array<std::string, Transaction::Target::MAX> Transaction::Target::TypeNames = {"Invalid", "Database", "Table", "Column"};
 	} // ast
-
 
 } // sql
 

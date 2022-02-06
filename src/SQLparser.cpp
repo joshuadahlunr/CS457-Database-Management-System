@@ -171,7 +171,7 @@ namespace sql::grammar {
 		// Rule that matches the SELECT keyword
 		struct Select: lexy::token_production {
 			static constexpr auto rule = UL::s + UL::e + UL::l + UL::e + UL::c + UL::t + ws;
-			static constexpr auto value = lexy::constant(ast::Transaction::Action::Select);
+			static constexpr auto value = lexy::constant(ast::Transaction::Action::Query);
 		};
 		// The SELECT keyword
 		static constexpr auto select = dsl::peek(UL::s) >> dsl::p<Select>;
