@@ -1,7 +1,9 @@
 #include <iostream>
 #include "reader.hpp"
-
 #include "SQLparser.hpp"
+
+// Constant representing the filename of database metadata files
+inline constexpr const char* metadataFile = ".metadata";
 
 // Struct storing the state of the program
 struct ProgramState {
@@ -12,19 +14,19 @@ struct ProgramState {
 };
 
 // Dispatcher function prototypes
-void use(const sql::ast::Transaction& transaction, ProgramState& state);
-void create(const sql::ast::Transaction& transaction, ProgramState& state);
-void drop(const sql::ast::Transaction& transaction, ProgramState& state);
-void alter(const sql::ast::Transaction& transaction, ProgramState& state);
-void query(const sql::ast::Transaction& transaction, ProgramState& state);
+void use(const sql::Transaction& transaction, ProgramState& state);
+void create(const sql::Transaction& transaction, ProgramState& state);
+void drop(const sql::Transaction& transaction, ProgramState& state);
+void alter(const sql::Transaction& transaction, ProgramState& state);
+void query(const sql::Transaction& transaction, ProgramState& state);
 // Execution function prototypes
-void useDatabase(const sql::ast::Transaction& transaction, ProgramState& state);
-void createDatabase(const sql::ast::Transaction& transaction, ProgramState& state);
-void createTable(const sql::ast::Transaction& transaction, ProgramState& state);
-void dropDatabase(const sql::ast::Transaction& transaction, ProgramState& state);
-void dropTable(const sql::ast::Transaction& transaction, ProgramState& state);
-void alterTable(const sql::ast::Transaction& transaction, ProgramState& state);
-void queryTable(const sql::ast::Transaction& transaction, ProgramState& state);
+void useDatabase(const sql::Transaction& transaction, ProgramState& state, bool quiet = false);
+void createDatabase(const sql::Transaction& transaction, ProgramState& state);
+void createTable(const sql::Transaction& transaction, ProgramState& state);
+void dropDatabase(const sql::Transaction& transaction, ProgramState& state);
+void dropTable(const sql::Transaction& transaction, ProgramState& state);
+void alterTable(const sql::Transaction& transaction, ProgramState& state);
+void queryTable(const sql::Transaction& transaction, ProgramState& state);
 
 // Function which makes a string lowercase
 std::string tolower(std::string s){
@@ -35,8 +37,7 @@ std::string tolower(std::string s){
 
 
 int main() {
-	std::cout << "Hello World!" << std::endl;
-
+	// Create input reader
 	Reader r = Reader(/*enableHistory*/true)
 		.setPrompt("> ");
 
@@ -44,13 +45,16 @@ int main() {
 	ProgramState state;
 	bool keepRunning = true;
 	while(keepRunning){
+		// Read some input from the user
 		std::string input = r.read();
 
 		// Command to exit the program
-		if(tolower(input) == ".exit"){
+		if(input.starts_with("--")){
+			// Skip comments
+		} else if(tolower(input) == ".exit"){
 			keepRunning = false;
 		} else {
-			sql::ast::Transaction::ptr transaction = parseSQL(input);
+			sql::Transaction::ptr transaction = parseSQL(input);
 			// If we failed to parse the provided statement... continue
 			if(transaction == nullptr)
 				continue; // Error message provided by parse
@@ -58,19 +62,19 @@ int main() {
 			// Hand off the function to the proper dispatcher based on the action this transaction wishes to perform
 			// NOTE: We dereference the pointer we recieved from the parser, its lifetime extends beyond the function utilization and we can still use polymorphism on references
 			switch(transaction->action){
-			break; case sql::ast::Transaction::Use:
+			break; case sql::Transaction::Use:
 				use(*transaction, state);
-			break; case sql::ast::Transaction::Create:
+			break; case sql::Transaction::Create:
 				create(*transaction, state);
-			break; case sql::ast::Transaction::Drop:
+			break; case sql::Transaction::Drop:
 				drop(*transaction, state);
-			break; case sql::ast::Transaction::Alter:
+			break; case sql::Transaction::Alter:
 				alter(*transaction, state);
-			break; case sql::ast::Transaction::Query:
+			break; case sql::Transaction::Query:
 				query(*transaction, state);
 			// If the action is unsupported, error
 			break; default:
-				std::cout << "!Unsupported action: " << sql::ast::Transaction::ActionNames[transaction->action] << std::endl;
+				throw std::runtime_error("!Unsupported action: " + sql::Transaction::ActionNames[transaction->action]);
 			}
 		}
 	}
@@ -79,62 +83,62 @@ int main() {
 }
 
 // Function which executes the proper USE function based on the statement target
-inline void use(const sql::ast::Transaction& transaction, ProgramState& state){
+inline void use(const sql::Transaction& transaction, ProgramState& state){
 	switch(transaction.target.type){
-	break; case sql::ast::Transaction::Target::Database:
+	break; case sql::Transaction::Target::Database:
 		useDatabase(transaction, state);
 	// If the action is unsupported for this target, error
 	break; default:
-		std::cerr << "!Can not USE a " << sql::ast::Transaction::Target::TypeNames[transaction.target.type] << "." << std::endl;
+		std::cerr << "!Can not USE a " << sql::Transaction::Target::TypeNames[transaction.target.type] << "." << std::endl;
 	}
 }
 
 
 // Function which executes the proper CREATE function based on the statement target
-inline void create(const sql::ast::Transaction& transaction, ProgramState& state){
+inline void create(const sql::Transaction& transaction, ProgramState& state){
 	switch(transaction.target.type){
-	break; case sql::ast::Transaction::Target::Database:
+	break; case sql::Transaction::Target::Database:
 		createDatabase(transaction, state);
-	break; case sql::ast::Transaction::Target::Table:
+	break; case sql::Transaction::Target::Table:
 		createTable(transaction, state);
 	// If the action is unsupported for this target, error
 	break; default:
-		std::cerr << "!Can not CREATE a " << sql::ast::Transaction::Target::TypeNames[transaction.target.type] << "." << std::endl;
+		std::cerr << "!Can not CREATE a " << sql::Transaction::Target::TypeNames[transaction.target.type] << "." << std::endl;
 	}
 }
 
 // Function which executes the proper DROP function based on the statement target
-inline void drop(const sql::ast::Transaction& transaction, ProgramState& state){
+inline void drop(const sql::Transaction& transaction, ProgramState& state){
 	switch(transaction.target.type){
-	break; case sql::ast::Transaction::Target::Database:
+	break; case sql::Transaction::Target::Database:
 		dropDatabase(transaction, state);
-	break; case sql::ast::Transaction::Target::Table:
+	break; case sql::Transaction::Target::Table:
 		dropTable(transaction, state);
 	// If the action is unsupported for this target, error
 	break; default:
-		std::cerr << "!Can not DROP a " << sql::ast::Transaction::Target::TypeNames[transaction.target.type] << "." << std::endl;
+		std::cerr << "!Can not DROP a " << sql::Transaction::Target::TypeNames[transaction.target.type] << "." << std::endl;
 	}
 }
 
 // Function which executes the proper ALTER function based on the statement target
-inline void alter(const sql::ast::Transaction& transaction, ProgramState& state){
+inline void alter(const sql::Transaction& transaction, ProgramState& state){
 	switch(transaction.target.type){
-	break; case sql::ast::Transaction::Target::Table:
+	break; case sql::Transaction::Target::Table:
 		alterTable(transaction, state);
 	// If the action is unsupported for this target, error
 	break; default:
-		std::cerr << "!Can not ALTER a " << sql::ast::Transaction::Target::TypeNames[transaction.target.type] << "." << std::endl;
+		std::cerr << "!Can not ALTER a " << sql::Transaction::Target::TypeNames[transaction.target.type] << "." << std::endl;
 	}
 }
 
 // Function which executes the proper QUERY function based on the statement target
-inline void query(const sql::ast::Transaction& transaction, ProgramState& state){
+inline void query(const sql::Transaction& transaction, ProgramState& state){
 	switch(transaction.target.type){
-	break; case sql::ast::Transaction::Target::Table:
+	break; case sql::Transaction::Target::Table:
 		queryTable(transaction, state);
 	// If the action is unsupported for this target, error
 	break; default:
-		std::cerr << "!Can not SELECT a " << sql::ast::Transaction::Target::TypeNames[transaction.target.type] << "." << std::endl;
+		std::cerr << "!Can not SELECT a " << sql::Transaction::Target::TypeNames[transaction.target.type] << "." << std::endl;
 	}
 }
 
@@ -142,42 +146,147 @@ inline void query(const sql::ast::Transaction& transaction, ProgramState& state)
 // -- Execution Functions --
 
 
-void useDatabase(const sql::ast::Transaction& transaction, ProgramState& state){
-	std::cout << "u TODO!" << std::endl;
+// Function which performs a database use transaction (updates the current database in the state)
+// NOTE: The success message can be suppressed by passing true to quiet
+void useDatabase(const sql::Transaction& transaction, ProgramState& state, bool quiet /*= false*/){
+	// Initial data for the database
+	sql::Database database;
+	database.name = transaction.target.name;
+	database.path = absolute(state.databaseDirectory / database.name);
+
+	// If the database directory doesn't already exist, error
+	if(!exists(database.path)){
+		std::cerr << "!Failed to use database " << database.name << " because it doesn't exist." << std::endl;
+		return;
+	}
+
+	// Open the database's metadata file (ensuring it exists)
+	if(!exists(database.path / metadataFile)){
+		std::cerr << "!Failed to use database " << database.name << " because its metadata doesn't exist." << std::endl;
+		return;
+	}
+	simple::file_istream<std::true_type> fin((database.path / metadataFile).c_str());
+	try {
+		// Load the database's metadata file
+		fin >> database;
+
+		// Update the current database
+		state.currentDatabase = database;
+
+		if(!quiet) std::cout << "Using database " << database.name << "." << std::endl;
+	} catch(std::runtime_error) {
+		std::cerr << "!Failed to use database " << database.name << " because its metadata is corupted." << std::endl;
+	}
+	fin.close();
 }
 
-void createDatabase(const sql::ast::Transaction& transaction, ProgramState& state){
-	std::cout << "cd TODO!" << std::endl;
+// Function which creates a new database in the filesystem
+void createDatabase(const sql::Transaction& transaction, ProgramState& state){
+	// Initial data for the database
+	sql::Database database;
+	database.name = transaction.target.name;
+	database.path = absolute(state.databaseDirectory / database.name);
+
+	// If the database directory already exists, error
+	if(exists(database.path)){
+		std::cerr << "!Failed to create database " << database.name << " because it already exists." << std::endl;
+		return;
+	}
+	
+	// Create directorty for the database and save metadata file
+	std::filesystem::create_directory(database.path);
+	simple::file_ostream<std::true_type> fout((database.path / metadataFile).c_str());
+	fout << database;
+	fout.close();
+
+	std::cout << "Database " << database.name << " created." << std::endl;
+
+	// If we aren't currently using a database, start using the new database
+	if(!state.currentDatabase.has_value())
+		useDatabase({sql::Transaction::Base, sql::Transaction::Use, {sql::Transaction::Target::Database, database.name}}, state);
 }
 
-void createTable(const sql::ast::Transaction& _transaction, ProgramState& state){
+// Function which deletes a database from the filesystem
+void dropDatabase(const sql::Transaction& transaction, ProgramState& state){
+	// Initial data for the database
+	sql::Database database;
+	database.name = transaction.target.name;
+	database.path = absolute(state.databaseDirectory / database.name);
+
+	// If the database directory doesn't already exist, error
+	if(!exists(database.path)){
+		std::cerr << "!Failed to delete database " << database.name << " because it doesn't exist." << std::endl;
+		return;
+	}
+
+	// Make sure the metadata is valid (if not the database doesn't exist)
+	std::string usingCache = state.currentDatabase.value_or(sql::Database{}).name;
+	useDatabase({sql::Transaction::Base, sql::Transaction::Use, {sql::Transaction::Target::Database, database.name}}, state, /*quiet*/true);
+	if(state.currentDatabase.value_or(sql::Database{}).path != database.path){
+		std::cerr << "!Failed to delete database " << database.name << " because it doesn't exist." << std::endl;
+		return;
+	}
+	// Make sure we are still using the same database that we were before
+	if(!usingCache.empty())
+		useDatabase({sql::Transaction::Base, sql::Transaction::Use, {sql::Transaction::Target::Database, usingCache}}, state, /*quiet*/true);
+	else state.currentDatabase = {};
+
+	// Remove the database
+	std::filesystem::remove_all(database.path);
+	// If we are currently using the database, we are now using nothing
+	if(database.path == state.currentDatabase.value_or(sql::Database{}).path)
+		state.currentDatabase = {};
+
+	std::cout << "Database " << database.name << " deleted." << std::endl;
+}
+
+void createTable(const sql::Transaction& _transaction, ProgramState& state){
 	// Sanity checked downcast to the special type of transaction used by this function
-	if(_transaction.type != sql::ast::Transaction::CreateTable)
+	if(_transaction.type != sql::Transaction::CreateTable)
 		throw std::runtime_error("A parsing issue has occured! Somehow a non-CreateTableTransaction has arrived in createTable");
-	const sql::ast::CreateTableTransaction& transaction = *reinterpret_cast<const sql::ast::CreateTableTransaction*>(&_transaction);
+	const sql::CreateTableTransaction& transaction = *reinterpret_cast<const sql::CreateTableTransaction*>(&_transaction);
+
+	// Make sure that a database is currently being used
+	if(!state.currentDatabase.has_value()){
+		std::cerr << "!Failed to create table " << transaction.target.name << " because no database is currently being used." << std::endl;
+		return;
+	}
 	std::cout << "ct TODO!" << std::endl;
 }
 
-void dropDatabase(const sql::ast::Transaction& transaction, ProgramState& state){
-	std::cout << "dd TODO!" << std::endl;
-}
-
-void dropTable(const sql::ast::Transaction& transaction, ProgramState& state){
+void dropTable(const sql::Transaction& transaction, ProgramState& state){
+	// Make sure that a database is currently being used
+	if(!state.currentDatabase.has_value()){
+		std::cerr << "!Failed to remove table " << transaction.target.name << " because no database is currently being used." << std::endl;
+		return;
+	}
 	std::cout << "dt TODO!" << std::endl;
 }
 
-void alterTable(const sql::ast::Transaction& _transaction, ProgramState& state){
+void alterTable(const sql::Transaction& _transaction, ProgramState& state){
 	// Sanity checked downcast to the special type of transaction used by this function
-	if(_transaction.type != sql::ast::Transaction::AlterTable)
+	if(_transaction.type != sql::Transaction::AlterTable)
 		throw std::runtime_error("A parsing issue has occured! Somehow a non-AlterTableTransaction has arrived in alterTable");
-	const sql::ast::AlterTableTransaction& transaction = *reinterpret_cast<const sql::ast::AlterTableTransaction*>(&_transaction);
+	const sql::AlterTableTransaction& transaction = *reinterpret_cast<const sql::AlterTableTransaction*>(&_transaction);
+
+	// Make sure that a database is currently being used
+	if(!state.currentDatabase.has_value()){
+		std::cerr << "!Failed to alter table " << transaction.target.name << " because no database is currently being used." << std::endl;
+		return;
+	}
 	std::cout << "a TODO!" << std::endl;
 }
 
-void queryTable(const sql::ast::Transaction& _transaction, ProgramState& state){
+void queryTable(const sql::Transaction& _transaction, ProgramState& state){
 	// Sanity checked downcast to the special type of transaction used by this function
-	if(_transaction.type != sql::ast::Transaction::QueryTable)
+	if(_transaction.type != sql::Transaction::QueryTable)
 		throw std::runtime_error("A parsing issue has occured! Somehow a non-QueryTableTransaction has arrived in queryTable");
-	const sql::ast::QueryTableTransaction& transaction = *reinterpret_cast<const sql::ast::QueryTableTransaction*>(&_transaction);
+	const sql::QueryTableTransaction& transaction = *reinterpret_cast<const sql::QueryTableTransaction*>(&_transaction);
+
+	// Make sure that a database is currently being used
+	if(!state.currentDatabase.has_value()){
+		std::cerr << "!Failed to query table " << transaction.target.name << " because no database is currently being used." << std::endl;
+		return;
+	}
 	std::cout << "q TODO!" << std::endl;
 }

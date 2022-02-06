@@ -7,6 +7,35 @@
 #include <vector>
 #include <map>
 #include <optional>
+#include <iostream>
+#include <SimpleBinStream.h>
+
+// std::filesystem::path Serialization
+namespace std::filesystem {
+	template<typename same_endian_type> typename simple::file_ostream<same_endian_type>& operator<< ( simple::file_ostream<same_endian_type>& s, const std::filesystem::path& p) { return s << p.string(); }
+	template<typename same_endian_type> typename simple::file_istream<same_endian_type>& operator>> ( simple::file_istream<same_endian_type>& s, std::filesystem::path& p) {
+		std::string temp;
+		s >> temp;
+		p = std::filesystem::path{temp};
+		return s;
+	}
+
+	template<typename same_endian_type> typename simple::file_ostream<same_endian_type>& operator<< ( simple::file_ostream<same_endian_type>& s, const std::vector<std::filesystem::path>& v) {
+		s << v.size();
+		for(auto &p: v)
+			s << p;
+		return s;
+	}
+	template<typename same_endian_type> typename simple::file_istream<same_endian_type>& operator>> ( simple::file_istream<same_endian_type>& s, std::vector<std::filesystem::path>& v) {
+		size_t size;
+		s >> size;
+		v.resize(size);
+		for(int i = 0; i < size; i++)
+			s >> v[i];
+		return s;
+	}
+}
+
 
 namespace sql {
 
@@ -61,10 +90,10 @@ namespace sql {
 
 	// Struct representing one piece of data stored in a column
 	struct Data {
-		// Pointer to the column this piece of data belongs to
-		Column* column;
-		// Pointer to the record (row) this piece of data belongs to
-		Record* record;
+		// // Pointer to the column this piece of data belongs to
+		// Column* column;
+		// // Pointer to the record (row) this piece of data belongs to
+		// Record* record;
 
 		// Bool which indicates if there is data stored here or not
 		bool null = false;
@@ -110,9 +139,16 @@ namespace sql {
 
 		std::map<std::string, Table*> tableMap; // TODO: should this map, map paths to tables?
 	};
+	// Database Serialization
+	template<typename same_endian_type> typename simple::file_ostream<same_endian_type>& operator << ( simple::file_ostream<same_endian_type>& s, const Database& d) {
+		return s << d.name << d.path << d.tables;
+	}
+	template<typename same_endian_type> typename simple::file_istream<same_endian_type>& operator >> ( simple::file_istream<same_endian_type>& s, Database& d) {
+		return s >> d.name >> d.path >> d.tables;
+	}
 
 
-	namespace ast {
+	inline namespace ast {
 		// Struct which represents a single command provided by the user
 		struct Transaction {
 			// Smart pointer wrapper around a transaction

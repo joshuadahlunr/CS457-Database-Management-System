@@ -58,13 +58,7 @@ namespace sql::grammar {
 		constexpr static auto tail = lexy::dsl::unicode::alnum / dsl::lit_c<'_'> / dsl::lit_c<'#'> / dsl::lit_c<'@'> / dsl::lit_c<'$'>;
 
 		static constexpr auto rule = dsl::peek(head) >> dsl::identifier(head, tail);
-		static constexpr auto value = lexy::as_string<std::string> | lexy::callback<std::string>([](std::string&& ident){
-			// Ensure that every character in the identifier is lowercase
-			for(char& c: ident)
-				c = std::tolower(c);
-
-			return ident;
-		});
+		static constexpr auto value = lexy::as_string<std::string>;
 
 		// A comma seperated list of identifiers
 		struct List {
