@@ -4,3 +4,6 @@
 [submodule "thirdparty/linenoise"]
 	path = thirdparty/linenoise
 	url = https://github.com/antirez/linenoise.git
+[submodule "thirdparty/simplebinstream"]
+	path = thirdparty/simplebinstream
+	url = https://github.com/shaovoon/simplebinstream.git

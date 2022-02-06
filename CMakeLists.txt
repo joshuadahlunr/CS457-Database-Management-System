@@ -8,7 +8,7 @@ set(CMAKE_BUILD_TYPE Debug)
 set(CXX_STANDARD 17)
 
 file(GLOB sources "src/*.cpp" "src/*.c" "thirdparty/linenoise/linenoise.c")
-set(includes "src/" "thirdparty/linenoise/" ${ext_include_dir} ${Boost_INCLUDE_DIRS})
+set(includes "src/" "thirdparty/linenoise/" "thirdparty/simplebinstream/TestBinStream" ${ext_include_dir} ${Boost_INCLUDE_DIRS})
 set(libraries lexy ${Boost_LIBRARIES})
 
 message("${sources}")
