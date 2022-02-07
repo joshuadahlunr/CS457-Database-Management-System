@@ -35,6 +35,23 @@ std::string tolower(std::string s){
 	return s;
 }
 
+// Function which removes all of the deliminating characters from the left side of a string
+static std::string ltrim (const std::string s, const char* delims = " \t\v\f\r\n") {
+	if(size_t pos = s.find_first_not_of(delims); pos != std::string::npos)
+		return s.substr(pos);
+	return s; // Return a copy of the string if we couldn't find any of the given things
+}
+// Function which removes all of the deliminating characters from the right side of a string
+static std::string rtrim (const std::string& s, const char* delims = " \t\v\f\r\n") {
+	if(size_t pos = s.find_last_not_of(delims); pos != std::string::npos)
+		return s.substr(0, pos + 1);
+	return s; // Return a copy of the string if we couldn't find any of the given things
+}
+// Function which removes all of the deliminating characters from the both sides of a string
+inline std::string trim (const std::string& s, const char* delims = " \t\v\f\r\n") {
+	return rtrim(ltrim(s, delims), delims);
+}
+
 
 int main() {
 	// Create input reader
@@ -46,11 +63,12 @@ int main() {
 	bool keepRunning = true;
 	while(keepRunning){
 		// Read some input from the user
-		std::string input = r.read();
+		std::string input = trim(r.read());
 
-		// Command to exit the program
-		if(input.starts_with("--")){
+		// Skipping comments
+		if(input.empty() || input == "\r" || input.starts_with("--")){
 			// Skip comments
+		// Command to exit the program
 		} else if(tolower(input) == ".exit"){
 			keepRunning = false;
 		} else {
@@ -79,7 +97,7 @@ int main() {
 		}
 	}
 
-	std::cout << "All done" << std::endl;
+	std::cout << "All done." << std::endl;
 }
 
 // Function which executes the proper USE function based on the statement target
@@ -160,6 +178,33 @@ void saveTableFile(const sql::Table table){
 	fout.close();
 }
 
+// Helper that loads a table from file (also ensures that exists, both on disk and in the database)
+bool loadTable(sql::Table& table, const sql::Database& database, std::string operation){
+	// Ensure that the table exists in the current database
+	if(std::find(database.tables.begin(), database.tables.end(), table.path) == database.tables.end()){
+		std::cerr << "!Failed to " << operation << " table " << table.name << " because it doesn't exist." << std::endl;
+		return false;
+	}
+
+	// Ensure that the table exists and load it
+	if(!exists(table.path)){
+		std::cerr << "!Failed to " << operation << " table " << table.name << " because it does not exist." << std::endl;
+		return false;
+	}
+	simple::file_istream<std::true_type> fin(table.path.c_str());
+	try {
+		// Load the table
+		sql::Table table;
+		fin >> table;
+		return true;
+	} catch(std::runtime_error) {
+		std::cerr << "!Failed to " << operation << " table " << table.name << " because it is corupted." << std::endl;
+	}
+
+	// If we failed for any reason then return false
+	return false;
+}
+
 
 // --- Execution Functions ---
 
@@ -231,7 +276,7 @@ void dropDatabase(const sql::Transaction& transaction, ProgramState& state){
 
 	// If the database directory doesn't already exist, error
 	if(!exists(database.path)){
-		std::cerr << "!Failed to dtbl_1elete database " << database.name << " because it doesn't exist." << std::endl;
+		std::cerr << "!Failed to delete database " << database.name << " because it doesn't exist." << std::endl;
 		return;
 	}
 
@@ -334,7 +379,69 @@ void alterTable(const sql::Transaction& _transaction, ProgramState& state){
 		return;
 	}
 	sql::Database& database = *state.currentDatabase;
-	std::cout << "a TODO!" << std::endl;
+	
+	// Create a table and set its metadata
+	sql::Table table;
+	table.name = transaction.target.name;
+	table.path = database.path / (table.name + ".table");
+
+	// Load the table from disk (helper handles ensuring that it exists)
+	if(!loadTable(table, database, "alter"))
+		return;
+
+	// Determine how to procede based on the secondary alter action
+	switch(transaction.alterAction){
+	break; case sql::Transaction::Add: {
+		// Add the new column and add null data to represent it
+		table.columns.push_back(transaction.alterTarget);
+		for(sql::Record& record: table.records)
+			record.emplace_back(sql::Data::null(&table.columns.back()));
+
+		std::cout << "Table " << table.name << " modified, added " << transaction.alterTarget.name << "." << std::endl;
+	}
+	break; case sql::Transaction::Remove: {
+		// Find the column's index in the table, error if not present
+		size_t index = -1;
+		for(int i = 0; i < table.columns.size(); i++)
+			if(table.columns[i].name == transaction.alterTarget.name)
+				index = i;
+		if(index == -1){
+			std::cerr << "!Failed to remove " << transaction.alterTarget.name << " because it doesn't exist in " << table.name << "." << std::endl;
+			return;
+		}
+
+		// Remove the column from the metadata and from each record
+		table.columns.erase(table.columns.begin() + index);
+		for(sql::Record& record: table.records)
+			record.erase(record.begin() + index);
+
+		std::cout << "Table " << table.name << " modified, removed " << transaction.alterTarget.name << "." << std::endl;
+	}
+	break; case sql::Transaction::Alter: {
+		// Find the column's index in the table, error if not present
+		size_t index = -1;
+		for(int i = 0; i < table.columns.size(); i++)
+			if(table.columns[i].name == transaction.alterTarget.name)
+				index = i;
+		if(index == -1){
+			std::cerr << "!Failed to modify " << transaction.alterTarget.name << " because it doesn't exist in " << table.name << "." << std::endl;
+			return;
+		}
+
+		// Update the target column and nullify all of the data in that column
+		table.columns[index] = transaction.alterTarget;
+		for(sql::Record& record: table.records)
+			record[index] = sql::Data::null(&table.columns[index]);
+
+		std::cout << "Table " << table.name << " modified, modified " << transaction.alterTarget.name << "." << std::endl;
+	}
+	// If the action is unsupported, error
+	break; default:
+		throw std::runtime_error("!Unsupported action: " + sql::Transaction::ActionNames[transaction.alterAction]);
+	}
+
+	// Save changes to disk
+	saveTableFile(table);
 }
 
 void queryTable(const sql::Transaction& _transaction, ProgramState& state){
@@ -354,29 +461,18 @@ void queryTable(const sql::Transaction& _transaction, ProgramState& state){
 	sql::Table table;
 	table.name = transaction.target.name;
 	table.path = database.path / (table.name + ".table");
-	
-	// Ensure that the table exists and load it
-	if(!exists(table.path)){
-		std::cerr << "!Failed to query table " << table.name << " because it does not exist." << std::endl;
+
+	// Load the table from disk (helper handles ensuring that it exists)
+	if(!loadTable(table, database, "query"))
 		return;
-	}
-	simple::file_istream<std::true_type> fin(table.path.c_str());
-	try {
-		// Load the table
-		fin >> table;
 
-		// If the table has no data then there is nothing to display
-		if(table.columns.empty())
-			return;
+	// If the table has no data then there is nothing to display
+	if(table.columns.empty())
+		return;
 
-		// Print out the headers
-		std::cout << table.columns[0].name << " " << table.columns[0].type.to_string();
-		for(int i = 1; i < table.columns.size(); i++)
-			std::cout << " | " << table.columns[i].name << " " << table.columns[i].type.to_string();
-		std::cout << std::endl;
-
-		// TODO: Implement query logic
-	} catch(std::runtime_error) {
-		std::cerr << "!Failed to query tavle " << database.name << " because it is corupted." << std::endl;
-	}
+	// Print out the headers
+	std::cout << table.columns[0].name << " " << table.columns[0].type.to_string();
+	for(int i = 1; i < table.columns.size(); i++)
+		std::cout << " | " << table.columns[i].name << " " << table.columns[i].type.to_string();
+	std::cout << std::endl;
 }

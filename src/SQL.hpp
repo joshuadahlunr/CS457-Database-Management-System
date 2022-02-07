@@ -142,96 +142,21 @@ namespace sql {
 		// Record* record;
 
 		// The stored data
-		using Variant = std::variant<int64_t, double, std::string>;
-		std::optional<Variant> data;
-		// // Union actually storing the data (the column's data type indicates which member is currently in use)
-		// union {
-		// 	int64_t _int;
-		// 	double _float;
-		// 	std::string _string;
-			
-		// 	// Byte array representation for serialization (must be sized to largest type)
-		// 	std::byte bytes[sizeof(std::string)];
-		// };
+		using Variant = std::variant<std::monostate, int64_t, double, std::string>;
+		Variant data;
 
-		// // Constructors
-		// Data(Column* column = nullptr): column(column), null(true), bytes() {}
-		// Data(Column* column, int64_t data): column(column), null(false), _int(data) {}
-		// Data(Column* column, double data): column(column), null(false), _float(data) {}
-		// Data(Column* column, std::string data): column(column),  null(false), _string(data) {}
-		// Data(const Data& o) { *this = o; }
-		// Data(Data&& o) { *this = std::move(o); }
-
-		// // Assignment (act based on data )
-		// Data& operator=(const Data& o) {
-		// 	column = o.column;
-		// 	null = o.null;
-		// 	if(!null)
-		// 		switch(column->type.type){
-		// 		break; case DataType::CHAR:
-		// 		case DataType::VARCHAR:
-		// 		case DataType::TEXT:
-		// 			_string = o._string;
-		// 		break; default: {
-		// 			std::memcpy(bytes, o.bytes, sizeof(bytes));
-		// 		}
-		// 		}
-			
-		// 	return *this;
-		// }
-
-		// Data& operator=(Data&& o) {
-		// 	column = o.column;
-		// 	null = o.null;
-		// 	if(!null)
-		// 		switch(column->type.type){
-		// 		break; case DataType::CHAR:
-		// 		case DataType::VARCHAR:
-		// 		case DataType::TEXT:
-		// 			_string = std::move(o._string);
-		// 		break; default: {
-		// 			std::memcpy(bytes, o.bytes, sizeof(bytes));
-		// 		}
-		// 		}
-
-		// 	return *this;
-		// }
-
-		// // Destructor acts 
-		// ~Data(){
-		// 	if(column == nullptr) {
-		// 		std::cerr << "Pointer chain needed to destruct this piece of data not valid";
-		// 		std::terminate();
-		// 	}
-			
-		// 	switch(column->type.type){
-		// 	break; case DataType::CHAR:
-		// 	case DataType::VARCHAR:
-		// 	case DataType::TEXT:
-		// 		_string.~basic_string();
-		// 	break; default: {
-		// 		// Do nothing
-		// 	}
-		// 	}
-		// }
+		// Check if the stored data is null
+		bool isNull() const { return data.index() == 0; }
+		// Construct some null data
+		static Data null(Column* column = nullptr) { return {column, {}}; }
 	};
 	// Data De/serialization
 	template<typename same_endian_type> typename simple::file_ostream<same_endian_type>& operator << ( simple::file_ostream<same_endian_type>& s, const Data& d) {
-		s << std::byte(bool(d.data));
-		if(d.data) {
+		s << std::byte(d.isNull());
+		if(!d.isNull()) {
 			std::visit([&](const auto& data){
 				s << data;
 			}, d.data);
-			// // Store a byte or string representation based on the datatype
-			// switch(d.column->type.type){
-			// break; case DataType::INT:
-			// case DataType::FLOAT:
-			// 	s << d.bytes;
-			// break; case DataType::CHAR:
-			// case DataType::VARCHAR:
-			// case DataType::TEXT:
-			// 	s << d._string;
-			// }
 		}
 		return s;
 	}
@@ -258,16 +183,6 @@ namespace sql {
 				d.data = data;
 			}
 			}
-			// // Load a byte or string representation based on the datatype
-			// switch(d.column->type.type){
-			// break; case DataType::INT:
-			// case DataType::FLOAT:
-			// 	s >> d.bytes;
-			// break; case DataType::CHAR:
-			// case DataType::VARCHAR:
-			// case DataType::TEXT:
-			// 	s >> d._string;
-			// }
 		} else
 			d.data = {};
 		return s;
