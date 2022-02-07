@@ -1,14 +1,24 @@
+/*------------------------------------------------------------
+ * Filename: SQL.hpp
+ * Author: Joshua Dahl
+ * Email: joshuadahl@nevada.unr.edu
+ * Created: 2/7/22
+ * Modified: 2/7/22
+ * Description: Provides several data structs which hold database, tables, columns, records, etc...,
+ * 				also provides transactions the the parser creates as well as serialization for these things.
+ *------------------------------------------------------------*/
+
 #ifndef SQL_HPP
 #define SQL_HPP
 
-#include <string>
-#include <filesystem>
 #include <array>
-#include <vector>
+#include <filesystem>
+#include <iostream>
 #include <map>
 #include <optional>
-#include <iostream>
+#include <string>
 #include <variant>
+#include <vector>
 #include <SimpleBinStream.h>
 
 // std::filesystem::path Serialization
@@ -45,6 +55,7 @@ namespace sql {
 	struct Table;
 	struct Record;
 
+	// Wrapper around std::optional that provides support for replacing values with a wildcard
 	template<typename T>
 	struct Wildcard: public std::optional<T>{
 		using std::optional<T>::optional;
@@ -72,6 +83,7 @@ namespace sql {
 		// String size (used to indicate the length of char and varchar types)
 		uint16_t size = 1;
 
+		// Function which converts a datatype to a string
 		std::string to_string() const {
 			switch(type){
 			break; case INT:
@@ -85,11 +97,11 @@ namespace sql {
 			break; case TEXT:
 				return "text";
 			default:
-				return "unknown";
+				return "unknown-type";
 			}
 		}
 	};
-	// Column De/serialization
+	// Datatype De/serialization
 	template<typename same_endian_type> typename simple::file_ostream<same_endian_type>& operator << ( simple::file_ostream<same_endian_type>& s, const DataType& d) {
 		return s << d.type << d.size;
 	}
@@ -118,6 +130,7 @@ namespace sql {
 	template<typename same_endian_type> typename simple::file_istream<same_endian_type>& operator >> ( simple::file_istream<same_endian_type>& s, Column& c) {
 		return s >> c.name >> c.type;
 	}
+	// Vector of column De/serialization
 	template<typename same_endian_type> typename simple::file_ostream<same_endian_type>& operator << ( simple::file_ostream<same_endian_type>& s, const std::vector<Column>& v) {
 		s << v.size();
 		for(const Column& c: v)
@@ -154,6 +167,7 @@ namespace sql {
 	template<typename same_endian_type> typename simple::file_ostream<same_endian_type>& operator << ( simple::file_ostream<same_endian_type>& s, const Data& d) {
 		s << std::byte(d.isNull());
 		if(!d.isNull()) {
+			// if the data isn't null, we use visit to store the data in the file
 			std::visit([&](const auto& data){
 				s << data;
 			}, d.data);
@@ -164,6 +178,7 @@ namespace sql {
 		std::byte null;
 		s >> null;
 		if(!bool(null)) {
+			// If the data isn't null, we use the column pointer to determine how to deserialize the data
 			switch(d.column->type.type){
 			break; case DataType::INT: {
 				int64_t data;
@@ -258,7 +273,9 @@ namespace sql {
 	}
 
 
+	// Inline namespaces are optional, sql::ast::Transaction can also be accessed with sql::Transaction (the ast label is used in parser code to avoid ambiguities)
 	inline namespace ast {
+
 		// Struct which represents a single command provided by the user
 		struct Transaction {
 			// Smart pointer wrapper around a transaction

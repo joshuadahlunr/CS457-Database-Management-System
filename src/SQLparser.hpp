@@ -1,3 +1,12 @@
+/*------------------------------------------------------------
+ * Filename: SQLParser.hpp
+ * Author: Joshua Dahl
+ * Email: joshuadahl@nevada.unr.edu
+ * Created: 2/7/22
+ * Modified: 2/7/22
+ * Description: Headerfile which provides an interface (single parse function) to the parser.
+ *------------------------------------------------------------*/
+
 #ifndef SQL_PARSER_HPP
 #define SQL_PARSER_HPP
 

@@ -1,3 +1,12 @@
+/*------------------------------------------------------------
+ * Filename: reader.hpp
+ * Author: Joshua Dahl
+ * Email: joshuadahl@nevada.unr.edu
+ * Created: 2/7/22
+ * Modified: 2/7/22
+ * Description: C++ wrapper around linenoise (a console reader and history provider)
+ *------------------------------------------------------------*/
+
 #ifndef LINENOISE_HPP
 #define LINENOISE_HPP
 
@@ -19,7 +28,7 @@ class Reader {
 	std::string prompt;
 	// Whether input should be masked
 	bool maskMode = false;
-	// Wheather input should be in multiline mode
+	// Weather input should be in multiline mode
 	bool multilineMode = false;
 
 	// Length of a history entry

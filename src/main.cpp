@@ -1,3 +1,12 @@
+/*------------------------------------------------------------
+ * Filename: main.cpp
+ * Author: Joshua Dahl
+ * Email: joshuadahl@nevada.unr.edu
+ * Created: 2/7/22
+ * Modified: 2/7/22
+ * Description: Main driver of the program, responsible for collecting user input, executing the parse, and then executing the proper operations.
+ *------------------------------------------------------------*/
+
 #include <iostream>
 #include "reader.hpp"
 #include "SQLparser.hpp"
@@ -53,21 +62,22 @@ inline std::string trim (const std::string& s, const char* delims = " \t\v\f\r\n
 }
 
 
+// Main function/entry point, runs a read-loop and dispatches to the proper execution function
 int main() {
 	// Create input reader
 	Reader r = Reader(/*enableHistory*/true)
 		.setPrompt("> ");
 
-	// Input loop 
+	// Input loop
 	ProgramState state;
 	bool keepRunning = true;
 	while(keepRunning){
 		// Read some input from the user
 		std::string input = trim(r.read());
 
-		// Skipping comments
+		// Skipping comments and empty input
 		if(input.empty() || input == "\r" || input.starts_with("--")){
-			// Skip comments
+			// Skip!
 		// Command to exit the program
 		} else if(tolower(input) == ".exit"){
 			keepRunning = false;
@@ -255,7 +265,7 @@ void createDatabase(const sql::Transaction& transaction, ProgramState& state){
 		std::cerr << "!Failed to create database " << database.name << " because it already exists." << std::endl;
 		return;
 	}
-	
+
 	// Create directorty for the database and save metadata file
 	std::filesystem::create_directory(database.path);
 	saveDatabaseMetadataFile(database);
@@ -301,6 +311,8 @@ void dropDatabase(const sql::Transaction& transaction, ProgramState& state){
 	std::cout << "Database " << database.name << " deleted." << std::endl;
 }
 
+// Function which creates a table, both on disk and in the currently used database's metadata
+void createTable(const sql::CreateTableTransaction& transaction, ProgramState& state) { return createTable((const sql::Transaction&)transaction, state); }
 void createTable(const sql::Transaction& _transaction, ProgramState& state){
 	// Sanity checked downcast to the special type of transaction used by this function
 	if(_transaction.type != sql::Transaction::CreateTable)
@@ -335,6 +347,7 @@ void createTable(const sql::Transaction& _transaction, ProgramState& state){
 	std::cout << "Table " << table.name << " created." << std::endl;
 }
 
+// Function which deletes a table, both on disk and in the currently used database's metadata
 void dropTable(const sql::Transaction& transaction, ProgramState& state){
 	// Make sure that a database is currently being used
 	if(!state.currentDatabase.has_value()){
@@ -342,7 +355,7 @@ void dropTable(const sql::Transaction& transaction, ProgramState& state){
 		return;
 	}
 	sql::Database& database = *state.currentDatabase;
-	
+
 	// Determine the path to the table
 	std::filesystem::path tablePath = database.path / (transaction.target.name + ".table");
 	// Ensure that the table doesn't already exist
@@ -367,6 +380,8 @@ void dropTable(const sql::Transaction& transaction, ProgramState& state){
 	std::cout << "Table " << transaction.target.name << " deleted." << std::endl;
 }
 
+// Function which modifies the metadata of a transaction
+void alterTable(const sql::AlterTableTransaction& transaction, ProgramState& state) { return createTable((const sql::Transaction&)transaction, state); }
 void alterTable(const sql::Transaction& _transaction, ProgramState& state){
 	// Sanity checked downcast to the special type of transaction used by this function
 	if(_transaction.type != sql::Transaction::AlterTable)
@@ -379,7 +394,7 @@ void alterTable(const sql::Transaction& _transaction, ProgramState& state){
 		return;
 	}
 	sql::Database& database = *state.currentDatabase;
-	
+
 	// Create a table and set its metadata
 	sql::Table table;
 	table.name = transaction.target.name;
@@ -444,6 +459,8 @@ void alterTable(const sql::Transaction& _transaction, ProgramState& state){
 	saveTableFile(table);
 }
 
+// Function which performs a query on the data in a table
+void queryTable(const sql::QueryTableTransaction& transaction, ProgramState& state) { return createTable((const sql::Transaction&)transaction, state); }
 void queryTable(const sql::Transaction& _transaction, ProgramState& state){
 	// Sanity checked downcast to the special type of transaction used by this function
 	if(_transaction.type != sql::Transaction::QueryTable)
@@ -456,7 +473,7 @@ void queryTable(const sql::Transaction& _transaction, ProgramState& state){
 		return;
 	}
 	sql::Database& database = *state.currentDatabase;
-	
+
 	// Create a table and set its metadata
 	sql::Table table;
 	table.name = transaction.target.name;
