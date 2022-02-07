@@ -143,7 +143,25 @@ inline void query(const sql::Transaction& transaction, ProgramState& state){
 }
 
 
-// -- Execution Functions --
+// --- Helpers ---
+
+
+// Helper function that saves a database's metadata
+void saveDatabaseMetadataFile(const sql::Database database){
+	simple::file_ostream<std::true_type> fout((database.path / metadataFile).c_str());
+	fout << database;
+	fout.close();
+}
+
+// Helper function that saves a table's metadata and data
+void saveTableFile(const sql::Table table){
+	simple::file_ostream<std::true_type> fout(table.path.c_str());
+	fout << table;
+	fout.close();
+}
+
+
+// --- Execution Functions ---
 
 
 // Function which performs a database use transaction (updates the current database in the state)
@@ -195,9 +213,7 @@ void createDatabase(const sql::Transaction& transaction, ProgramState& state){
 	
 	// Create directorty for the database and save metadata file
 	std::filesystem::create_directory(database.path);
-	simple::file_ostream<std::true_type> fout((database.path / metadataFile).c_str());
-	fout << database;
-	fout.close();
+	saveDatabaseMetadataFile(database);
 
 	std::cout << "Database " << database.name << " created." << std::endl;
 
@@ -215,7 +231,7 @@ void dropDatabase(const sql::Transaction& transaction, ProgramState& state){
 
 	// If the database directory doesn't already exist, error
 	if(!exists(database.path)){
-		std::cerr << "!Failed to delete database " << database.name << " because it doesn't exist." << std::endl;
+		std::cerr << "!Failed to dtbl_1elete database " << database.name << " because it doesn't exist." << std::endl;
 		return;
 	}
 
@@ -251,7 +267,27 @@ void createTable(const sql::Transaction& _transaction, ProgramState& state){
 		std::cerr << "!Failed to create table " << transaction.target.name << " because no database is currently being used." << std::endl;
 		return;
 	}
-	std::cout << "ct TODO!" << std::endl;
+	sql::Database& database = *state.currentDatabase;
+
+	// Create a table and set its metadata
+	sql::Table table;
+	table.name = transaction.target.name;
+	table.path = database.path / (table.name + ".table");
+	// Ensure that the table doesn't already exist
+	if(exists(table.path)){
+		std::cerr << "!Failed to create table " << table.name << " because it already exists." << std::endl;
+		return;
+	}
+	// Set the table's column metadata
+	table.columns = transaction.columns;
+	// Add the table to the database's metadata
+	database.tables.push_back(table.path);
+
+	// Save the changes to disk
+	saveTableFile(table);
+	saveDatabaseMetadataFile(database);
+
+	std::cout << "Table " << table.name << " created." << std::endl;
 }
 
 void dropTable(const sql::Transaction& transaction, ProgramState& state){
@@ -260,7 +296,30 @@ void dropTable(const sql::Transaction& transaction, ProgramState& state){
 		std::cerr << "!Failed to remove table " << transaction.target.name << " because no database is currently being used." << std::endl;
 		return;
 	}
-	std::cout << "dt TODO!" << std::endl;
+	sql::Database& database = *state.currentDatabase;
+	
+	// Determine the path to the table
+	std::filesystem::path tablePath = database.path / (transaction.target.name + ".table");
+	// Ensure that the table doesn't already exist
+	if(!exists(tablePath)){
+		std::cerr << "!Failed to delete table " << transaction.target.name << " because it doesn't exist." << std::endl;
+		return;
+	}
+
+	// Ensure that the table exists in the current database
+	auto itterator = std::find(database.tables.begin(), database.tables.end(), tablePath);
+	if(itterator == database.tables.end()){
+		std::cerr << "!Failed to delete table " << transaction.target.name << " because it doesn't exist." << std::endl;
+		return;
+	}
+	// Remove the table from the database
+	database.tables.erase(itterator);
+
+	// Save the changes to disk
+	std::filesystem::remove(tablePath);
+	saveDatabaseMetadataFile(database);
+
+	std::cout << "Table " << transaction.target.name << " deleted." << std::endl;
 }
 
 void alterTable(const sql::Transaction& _transaction, ProgramState& state){
@@ -274,6 +333,7 @@ void alterTable(const sql::Transaction& _transaction, ProgramState& state){
 		std::cerr << "!Failed to alter table " << transaction.target.name << " because no database is currently being used." << std::endl;
 		return;
 	}
+	sql::Database& database = *state.currentDatabase;
 	std::cout << "a TODO!" << std::endl;
 }
 
@@ -288,5 +348,35 @@ void queryTable(const sql::Transaction& _transaction, ProgramState& state){
 		std::cerr << "!Failed to query table " << transaction.target.name << " because no database is currently being used." << std::endl;
 		return;
 	}
-	std::cout << "q TODO!" << std::endl;
+	sql::Database& database = *state.currentDatabase;
+	
+	// Create a table and set its metadata
+	sql::Table table;
+	table.name = transaction.target.name;
+	table.path = database.path / (table.name + ".table");
+	
+	// Ensure that the table exists and load it
+	if(!exists(table.path)){
+		std::cerr << "!Failed to query table " << table.name << " because it does not exist." << std::endl;
+		return;
+	}
+	simple::file_istream<std::true_type> fin(table.path.c_str());
+	try {
+		// Load the table
+		fin >> table;
+
+		// If the table has no data then there is nothing to display
+		if(table.columns.empty())
+			return;
+
+		// Print out the headers
+		std::cout << table.columns[0].name << " " << table.columns[0].type.to_string();
+		for(int i = 1; i < table.columns.size(); i++)
+			std::cout << " | " << table.columns[i].name << " " << table.columns[i].type.to_string();
+		std::cout << std::endl;
+
+		// TODO: Implement query logic
+	} catch(std::runtime_error) {
+		std::cerr << "!Failed to query tavle " << database.name << " because it is corupted." << std::endl;
+	}
 }
