@@ -407,6 +407,16 @@ void alterTable(const sql::Transaction& _transaction, ProgramState& state){
 	// Determine how to procede based on the secondary alter action
 	switch(transaction.alterAction){
 	break; case sql::Transaction::Add: {
+		// Make sure sure that the column isn't in the metadata, error if present
+		size_t index = -1;
+		for(int i = 0; i < table.columns.size(); i++)
+			if(table.columns[i].name == transaction.alterTarget.name)
+				index = i;
+		if(index != -1){
+			std::cerr << "!Failed to add " << transaction.alterTarget.name << " because it already exists in " << table.name << "." << std::endl;
+			return;
+		}
+
 		// Add the new column and add null data to represent it
 		table.columns.push_back(transaction.alterTarget);
 		for(sql::Record& record: table.records)
