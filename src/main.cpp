@@ -48,13 +48,13 @@ std::string tolower(std::string s){
 static std::string ltrim (const std::string s, const char* delims = " \t\v\f\r\n") {
 	if(size_t pos = s.find_first_not_of(delims); pos != std::string::npos)
 		return s.substr(pos);
-	return s; // Return a copy of the string if we couldn't find any of the given things
+	return ""; // Return a null string if we couldn't find any of the given things
 }
 // Function which removes all of the deliminating characters from the right side of a string
 static std::string rtrim (const std::string& s, const char* delims = " \t\v\f\r\n") {
 	if(size_t pos = s.find_last_not_of(delims); pos != std::string::npos)
 		return s.substr(0, pos + 1);
-	return s; // Return a copy of the string if we couldn't find any of the given things
+	return ""; // Return a null string if we couldn't find any of the given things
 }
 // Function which removes all of the deliminating characters from the both sides of a string
 inline std::string trim (const std::string& s, const char* delims = " \t\v\f\r\n") {
@@ -66,7 +66,7 @@ inline std::string trim (const std::string& s, const char* delims = " \t\v\f\r\n
 int main() {
 	// Create input reader
 	Reader r = Reader(/*enableHistory*/true)
-		.setPrompt("> ");
+		.setPrompt("sql> ");
 
 	// Input loop
 	ProgramState state;
