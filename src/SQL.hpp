@@ -294,9 +294,9 @@ namespace sql {
 			// Types of Transactions (with different signatures)
 			enum Type {
 				Base,
-				QueryTable,
 				CreateTable,
 				AlterTable,
+				QueryTable,
 			};
 
 			// Actions a transaction can be performing
@@ -342,12 +342,6 @@ namespace sql {
 			Target target;
 		};
 
-		// Struct representing a table transaction
-		struct QueryTableTransaction: public Transaction {
-			// The columns (or wildcard) to query
-			Wildcard<std::vector<std::string>> columns;
-		};
-
 		// Struct representing a table creation transaction
 		struct CreateTableTransaction: public Transaction {
 			// The column metadata to create the table with
@@ -362,8 +356,34 @@ namespace sql {
 			Column alterTarget;  // Remove only uses the name, ignoring the datatype
 		};
 
+		// Struct representing a transaction with a set of where clauses
+		struct WhereTransaction: public Transaction {
+			enum Comparison {
+				equal,
+				notEqual,
+				less,
+				greater,
+				lessEqual,
+				greaterEqual,
+			};
+
+			struct Condition {
+				Column column;
+				Comparison comp;
+				Data::Variant value;
+			};
+
+			std::vector<Condition> conditions;
+		};
+
+		// Struct representing a table query transaction
+		struct QueryTableTransaction: public WhereTransaction {
+			// The columns (or wildcard) to query
+			Wildcard<std::vector<std::string>> columns;
+		};
+
 		// Memory backing for the enum name arrays
-		inline const std::array<std::string, Transaction::Action::MAX> Transaction::ActionNames = {"Invalid", "Use", "Create", "Drop", "Alter", "Query", "Add", "Remove"};
+		inline const std::array<std::string, Transaction::Action::MAX> Transaction::ActionNames = {"Invalid", "Use", "Create", "Drop", "Alter", "Insert", "Set", "Query", "Add", "Remove"};
 		inline const std::array<std::string, Transaction::Target::MAX> Transaction::Target::TypeNames = {"Invalid", "Database", "Table", "Column"};
 	} // ast
 

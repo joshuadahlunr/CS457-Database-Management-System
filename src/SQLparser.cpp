@@ -76,74 +76,241 @@ namespace sql::grammar {
 		};
 	};
 
-	// Rule that matches a string literal
-	struct StringLiteral: lexy::token_production {
-		// Error message provided when an invalid character is found in a string literal
-		struct invalid_char {
-			static LEXY_CONSTEVAL auto name() { return "invalid character in string literal"; }
+	namespace literal {
+		// Parses a numeric literal
+		struct number : lexy::token_production {
+			// Prefix indicating the base of the number
+			struct base_prefix : lexy::transparent_production {
+				static constexpr auto rule = dsl::opt(dsl::capture(LEXY_LIT("0x") / LEXY_LIT("0X") / LEXY_LIT("0b") / LEXY_LIT("0B") / LEXY_LIT("0")));
+				static constexpr auto value = lexy::as_string<std::string> | lexy::callback<uint8_t>([](auto prefix) -> uint8_t {
+					if(prefix.empty())
+						return 10; // Decimal
+					else if(prefix == "0x")
+						return 16; // Hex
+					else if(prefix == "0X")
+						return 16; // Hex
+					else if(prefix == "0b")
+						return 2; // Binary
+					else if(prefix == "0B")
+						return 2; // Binary
+					else if(prefix == "0")
+						return 8; // Octal
+					return 10;
+				});
+			};
+
+			template<typename Type = dsl::hex>
+			static constexpr auto digit = dsl::digit<Type> / dsl::lit_c<'_'> / dsl::lit_c<'\''>;
+
+			// A signed integer parsed as int64_t.
+			struct hex_integer : lexy::transparent_production {
+				static constexpr auto rule = dsl::capture(dsl::while_one(digit<dsl::hex>));
+				static constexpr auto value = lexy::as_string<std::string>;
+			};
+			struct decimal_integer : lexy::transparent_production {
+				static constexpr auto rule = dsl::capture(dsl::while_one(digit<dsl::decimal>));
+				static constexpr auto value = lexy::as_string<std::string>;
+			};
+
+			// + or - sign
+			struct sign : lexy::transparent_production {
+				enum type {
+					plus,
+					minus,
+				};
+
+				static constexpr auto rule = dsl::capture(dsl::lit_c<'+'> / dsl::lit_c<'-'>);
+				static constexpr auto value = lexy::as_string<std::string> | lexy::callback<type>([](auto sign) -> type {
+					return sign[0] == '+' ? type::plus : type::minus;
+				});
+			};
+
+			// Intermediate structure storing parsed results which are then assembled into a numeric value
+			struct intermediate {
+				std::optional<sign::type> integerSign;
+				uint8_t base;
+				std::optional<std::string_view> integer;
+				std::optional<std::string_view> fraction;
+				std::optional<sign::type> exponentSign;
+				std::optional<std::string_view> exponent;
+			};
+
+
+			static constexpr auto rule = [](){
+				auto exp_char = dsl::lit_c<'e'> | dsl::lit_c<'E'>;
+				
+				auto hexInt = dsl::peek(LEXY_LIT("0x") / LEXY_LIT("0X")) >> (dsl::p<base_prefix> + dsl::p<hex_integer>);
+				auto nonHexReal = dsl::peek(LEXY_LIT("0b") / LEXY_LIT("0B") / digit<dsl::decimal>) >> (dsl::p<base_prefix> + dsl::opt(dsl::p<decimal_integer>)
+					+ dsl::opt(dsl::lit_c<'.'> >> dsl::p<decimal_integer>) // Fraction
+					+ dsl::opt(exp_char >> dsl::opt(dsl::p<sign>) + dsl::p<hex_integer>)); // Exponent
+				return dsl::opt(dsl::p<sign>) + (hexInt | nonHexReal);
+			}();
+			static constexpr auto value = lexy::construct<intermediate> | lexy::callback<double>([](auto in) -> double {
+				// Convert a char into the hexadecimal value it represents
+				auto val = [](char c) -> uint8_t {
+					if (c >= '0' && c <= '9') return (uint8_t)c - '0';
+					else if(c >= 'A' && c <= 'Z') return (uint8_t)c - 'A' + 10;
+					else if(c >= 'a' && c <= 'z') return (uint8_t)c - 'a' + 10;
+					return 0;
+				};
+				// Convert the provided string of digits to a number of the provided base
+				auto toDecimal = [val](std::string_view str, uint8_t base) {
+					double power = 1; // Initialize power of base
+					double num = 0;  // Initialize result
+
+					// Decimal equivalent is str[len-1]*1 +
+					// str[len-2]*base + str[len-3]*(base^2) + ...
+					for (size_t i = str.size() - 1; i >= 0 && i < (size_t)-1; i--) {
+						// Skip underscores and single quotes
+						if(str[i] == '_' || str[i] == '\'')
+							continue;
+
+						// A digit in input number must be
+						// less than number's base
+						if (val(str[i]) >= base)
+							throw std::runtime_error(std::string("Invalid digit `") + str[i] + "` in base " + std::to_string(base) + " number");
+
+						num += val(str[i]) * power;
+						power = power * base;
+					}
+
+					return num;
+				};
+				// Convert the provided string of digits to a fraction of 1 / the provided base
+				auto toDecimalFraction = [val](std::string_view str, uint8_t base) {
+					double power = 1; power /= base; // Initialize power to 1/base
+					double num = 0;  // Initialize result
+
+					// Decimal equivalent is str[len-1]*1/base +
+					// str[len-2]*1/(base^2) + str[len-3]*1/(base^3) + ...
+					for (size_t i = str.size() - 1; i >= 0 && i < (size_t)-1; i--) {
+						// Skip underscores and single quotes
+						if(str[i] == '_' || str[i] == '\'')
+							continue;
+
+						// A digit in input number must be
+						// less than number's base
+						if (val(str[i]) >= base)
+							throw std::runtime_error(std::string("Invalid digit `") + str[i] + "` in base " + std::to_string(base) + " number");
+
+						num += val(str[i]) * power;
+						power = power / base;
+					}
+
+					return num;
+				};
+
+
+				double fractionValue = 0;
+				double exponentValue = 1;
+
+				// Convert the integer portion of the number
+				if(in.integer.has_value())
+					fractionValue = toDecimal(*in.integer, in.base);
+				else if(in.base = 8) { // If we have no integer portion and the base is 8, that means there is a sinle floating 0
+					in.base = 10;
+					fractionValue = 0;
+				} else
+					throw std::runtime_error("Number is required after prefix specifier");				
+				
+				// Convert the optional fractional portion of the number
+				if(in.fraction.has_value()) 
+					fractionValue += toDecimalFraction(*in.fraction, in.base);
+				// Negate the number if nessicary
+				if(in.integerSign.has_value() && *in.integerSign == sign::type::minus)
+					fractionValue = -fractionValue;
+
+				// Convert the exponential portion of the number
+				if(in.exponent.has_value()) {
+					size_t exponentRaw = toDecimal(*in.exponent, in.base);
+					for(size_t i = 0; i < exponentRaw; i++)
+						exponentValue *= in.base;
+
+					// Support negative exponents
+					if(in.exponentSign.has_value() && *in.exponentSign == sign::type::minus)
+						exponentValue = 1 / exponentValue;
+				}
+
+				return fractionValue * exponentValue;
+			});
 		};
 
-		// A mapping of the simple escape sequences to their replacement values.
-		static constexpr auto escaped_symbols = lexy::symbol_table<char> //
-			.map<'"'>('"')
-			.map<'\\'>('\\')
-			.map<'/'>('/')
-			.map<'b'>('\b')
-			.map<'f'>('\f')
-			.map<'n'>('\n')
-			.map<'r'>('\r')
-			.map<'t'>('\t');
 
-		static constexpr auto rule = [] {
-			// Everything is allowed inside a string except for control characters.
-			auto code_point = (-dsl::unicode::control).error<invalid_char>;
+		// Parses an arbitrary string literal
+		struct string : lexy::token_production {
+			struct invalid_char {
+				static LEXY_CONSTEVAL auto name() { return "invalid character in string literal"; }
+			};
 
-			// Escape sequences start with a backlash and either map one of the symbols,
-			// or a Unicode code point of the form uXXXX.
-			auto escape = dsl::backslash_escape //
-				.symbol<escaped_symbols>()
-				.rule(dsl::lit_c<'u'> >> dsl::code_point_id<4>);
+			// A mapping of the simple escape sequences to their replacement values.
+			static constexpr auto escaped_symbols = lexy::symbol_table<char>
+													.map<'"'>('"')
+													.map<'\''>('\'')
+													.map<'\?'>('?')
+													.map<'\\'>('\\')
+													.map<'/'>('/')
+													.map<'a'>('\a')
+													.map<'b'>('\b')
+													.map<'f'>('\f')
+													.map<'n'>('\n')
+													.map<'r'>('\r')
+													.map<'t'>('\t')
+													.map<'v'>('\v');
+													// .map<'0'>('\0');
 
-			// String of code_point with specified escape sequences, surrounded by ".
-			// We abort string parsing if we see a newline to handle missing closing ".
-			return dsl::quoted.limit(dsl::ascii::newline)(code_point, escape) | dsl::single_quoted.limit(dsl::ascii::newline)(code_point, escape);
-		}();
-		static constexpr auto value = lexy::as_string<std::string, lexy::utf8_encoding>;
-	};
+			static constexpr auto rule = [] {
+				// Everything is allowed inside a string except for control characters.
+				auto code_point = (-dsl::unicode::control).error<invalid_char>;
 
-	// Rule that matches a complex number (int or float)
-	struct NumberLiteral: lexy::token_production {
-		// A signed integer parsed as int64_t.
-		struct integer: lexy::transparent_production {
-			static constexpr auto rule = dsl::minus_sign + dsl::integer<std::int64_t>(dsl::digits<>.no_leading_zero());
-			static constexpr auto value = lexy::as_integer<std::int64_t>;
+				// Escape sequences start with a backlash and either map one of the symbols,
+				// or a Unicode code point of the form uXXXX.
+				auto escape = dsl::backslash_escape //
+								.symbol<escaped_symbols>()
+								.rule(dsl::peek(dsl::digit<lexy::dsl::octal>) >> (dsl::code_point_id<3, dsl::octal> | dsl::code_point_id<2, dsl::octal>
+									| dsl::integer<lexy::code_point, dsl::octal>(dsl::lit_c<'0'> / dsl::lit_c<'1'> / dsl::lit_c<'2'> / dsl::lit_c<'3'> / dsl::lit_c<'4'> / dsl::lit_c<'5'> / dsl::lit_c<'6'> / dsl::lit_c<'7'>)))
+								.rule(dsl::lit_c<'x'> >> dsl::code_point_id<2, dsl::hex>)
+								.rule(dsl::lit_c<'u'> >> dsl::code_point_id<4>)
+								.rule(dsl::lit_c<'U'> >> dsl::code_point_id<8>);
+
+				// String of code_point with specified escape sequences, surrounded by ".
+				// We abort string parsing if we see a newline to handle missing closing ".
+				return dsl::quoted.limit(dsl::ascii::newline)(code_point, escape)
+					| dsl::single_quoted.limit(dsl::ascii::newline)(code_point, escape);
+			}();
+
+			static constexpr auto value = lexy::as_string<std::string, lexy::utf8_encoding>;
+		};
+	
+
+		// A boolean value
+		struct boolean : lexy::token_production {
+			struct true_ : lexy::transparent_production {
+				static constexpr auto rule = UL::t + UL::r + UL::u + UL::e;
+				static constexpr auto value = lexy::constant(true);
+			};
+			struct false_ : lexy::transparent_production {
+				static constexpr auto rule = UL::f + UL::a + UL::l + UL::s + UL::e;
+				static constexpr auto value = lexy::constant(false);
+			};
+
+			static constexpr auto rule = (dsl::peek(UL::t) >> dsl::p<true_>) | (dsl::peek(UL::f) >> dsl::p<false_>);
+			static constexpr auto value = lexy::forward<bool>;
 		};
 
-		// The fractional part of a number parsed as the string.
-		struct fraction: lexy::transparent_production {
-			static constexpr auto rule  = dsl::lit_c<'.'> >> dsl::capture(dsl::digits<>);
-			static constexpr auto value = lexy::as_string<std::string>;
+
+		// A null value
+		struct null : lexy::token_production {
+			static constexpr auto rule = UL::n + UL::u + UL::l + UL::l;
+			static constexpr auto value = lexy::constant(std::monostate{});
 		};
 
-		// The exponent of a number parsed as int64_t.
-		struct exponent: lexy::transparent_production {
-			static constexpr auto rule = UL::e >> dsl::sign + dsl::integer<std::int16_t>(dsl::digits<>);
-			static constexpr auto value = lexy::as_integer<std::int16_t>;
+
+		// A variant comprised of every possible literal value
+		struct variant {
+			static constexpr auto rule = (dsl::peek(dsl::lit_c<'\"'> / dsl::lit_c<'\''>) >> dsl::p<string>) | (dsl::peek(UL::t / UL::f) >> dsl::p<boolean>) | (dsl::peek(dsl::digit<dsl::hex>) >> dsl::p<number>) | (dsl::peek(UL::n) >> dsl::p<null>);
+			static constexpr auto value = lexy::construct<Data::Variant>;
 		};
-
-		static constexpr auto rule = dsl::peek(dsl::lit_c<'-'> / dsl::digit<>)
-			>> dsl::p<integer> + dsl::opt(dsl::p<fraction>) + dsl::opt(dsl::p<exponent>);
-		static constexpr auto value = lexy::construct<Number>;
-	};
-
-	// Rule that matches a basic integer
-	struct IntegerLiteral: lexy::token_production {
-		static constexpr auto rule = [] {
-			auto digits = dsl::digits<>.sep(dsl::digit_sep_tick).no_leading_zero();
-			return dsl::integer<int64_t>(digits);
-		}();
-		static constexpr auto value = lexy::as_integer<int64_t>;
-	};
+	} // sql::grammar::literal
 
 	// Rule that matches the wildcard token and brings a nullopt value with it
 	struct Wildcard {
@@ -155,11 +322,15 @@ namespace sql::grammar {
 	static constexpr auto identifier = dsl::peek(Identifier::head) >> dsl::p<Identifier>;
 	static constexpr auto identifierList = dsl::p<Identifier::List>;
 	// A string literal
-	static constexpr auto stringLiteral = dsl::peek(LEXY_LIT("\"") / LEXY_LIT("'")) >> dsl::p<StringLiteral>;
+	static constexpr auto stringLiteral = dsl::peek(dsl::lit_c<'\"'> / dsl::lit_c<'\''>) >> dsl::p<literal::string>;
 	// A numeric literal
-	static constexpr auto numberLiteral = dsl::p<NumberLiteral>; // TODO: Needs branch condition?
-	// A (explicitly) integer literal
-	static constexpr auto integerLiteral = dsl::p<IntegerLiteral>; // TODO: Needs branch condition?
+	static constexpr auto numberLiteral = dsl::peek(dsl::digit<dsl::hex>) >> dsl::p<literal::number>; // TODO: Needs branch condition?
+	// A boolean literal
+	static constexpr auto booleanLiteral = dsl::peek(UL::t / UL::f) >> dsl::p<literal::boolean>;
+	// A null literal
+	static constexpr auto nullLiteral = dsl::peek(UL::n) >> dsl::p<literal::null>;
+	// A variant of literals
+	static constexpr auto literalVariant = dsl::p<literal::variant>;
 	// Wildcard token (with an attached nullopt value)
 	static constexpr auto wildcard = dsl::peek(tWildcard) >> dsl::p<Wildcard>;
 
@@ -266,6 +437,17 @@ namespace sql::grammar {
 		};
 		// The FROM keyword
 		static constexpr auto from = dsl::peek(UL::f) >> dsl::p<From>;
+
+		// Rule that matches the WHERE keyword
+		struct Where: lexy::token_production {
+			static constexpr auto rule = UL::w + UL::h + UL::e + UL::r + UL::e + ws;
+			static constexpr auto value = lexy::noop;
+		};
+		// The WHERE keyword
+		static constexpr auto where = dsl::peek(UL::w) >> dsl::p<Where>;
+
+		// The AND keyword
+		static constexpr auto And = (UL::a >> UL::n + UL::d) | dsl::lit_c<'&'>;
 	} // KW
 
 	// Types
@@ -298,7 +480,7 @@ namespace sql::grammar {
 
 		// Rule that matches the CHAR type
 		struct CHAR: lexy::token_production {
-			static constexpr auto rule = UL::c + UL::h + UL::a + UL::r + wss + dsl::lit_c<'('> + integerLiteral + dsl::lit_c<')'>;
+			static constexpr auto rule = UL::c + UL::h + UL::a + UL::r + wss + dsl::lit_c<'('> + numberLiteral + dsl::lit_c<')'>;
 			static constexpr auto value = lexy::callback<DataType>([](uint16_t size) {
 				return DataType{DataType::CHAR, size};
 			});
@@ -308,7 +490,7 @@ namespace sql::grammar {
 
 		// Rule that matches the VARCHAR type
 		struct VARCHAR: lexy::token_production {
-			static constexpr auto rule = UL::v + UL::a + UL::r + UL::c + UL::h + UL::a + UL::r + wss + dsl::lit_c<'('> + integerLiteral + dsl::lit_c<')'>;
+			static constexpr auto rule = UL::v + UL::a + UL::r + UL::c + UL::h + UL::a + UL::r + wss + dsl::lit_c<'('> + numberLiteral + dsl::lit_c<')'>;
 			static constexpr auto value = lexy::callback<DataType>([](uint16_t size) {
 				return DataType{DataType::VARCHAR, size};
 			});
@@ -330,13 +512,9 @@ namespace sql::grammar {
 	} // Type
 
 
+
 	// A rule that matches a column declaration (an identifier followed by a type)
 	struct ColumnDeclaration {
-		struct Intermediate {
-			std::string ident;
-			DataType type;
-		};
-
 		// <id> <type>
 		static constexpr auto rule = identifier + Type::anyType;
 		static constexpr auto value = lexy::construct<Column>;
@@ -349,6 +527,61 @@ namespace sql::grammar {
 	};
 	static constexpr auto columnDeclaration = dsl::p<ColumnDeclaration>;
 	static constexpr auto columnDeclarationList = dsl::p<ColumnDeclaration::List>;
+
+
+	// A rule that matches a where condition (an identifer followed by a comparison operator followed by a value literal)
+	struct WhereCondition {
+		// Structs that parse a comparison operator
+		struct EqualComparison {
+			static constexpr auto rule = dsl::lit_c<'='>;
+			static constexpr auto value = lexy::constant(WhereTransaction::equal);
+		};
+		struct NotEqualComparison {
+			static constexpr auto rule = LEXY_LIT("!=");
+			static constexpr auto value = lexy::constant(WhereTransaction::notEqual);
+		};
+		struct LessComparison {
+			static constexpr auto rule = dsl::lit_c<'<'>;
+			static constexpr auto value = lexy::constant(WhereTransaction::less);
+		};
+		struct GreaterComparison {
+			static constexpr auto rule = dsl::lit_c<'>'>;
+			static constexpr auto value = lexy::constant(WhereTransaction::greater);
+		};
+		struct LessEqualComparison {
+			static constexpr auto rule = LEXY_LIT("<=");
+			static constexpr auto value = lexy::constant(WhereTransaction::lessEqual);
+		};
+		struct GreaterEqualComparison {
+			static constexpr auto rule = LEXY_LIT(">=");
+			static constexpr auto value = lexy::constant(WhereTransaction::greaterEqual);
+		};
+		// Intermediate struct holding parsed results before they are transformed into a condition
+		struct Intermediate {
+			std::string column;
+			WhereTransaction::Comparison comparison;
+			Data::Variant value;
+		};
+
+		// <id> (= | != | < | > | <= | >=) (<string> | <number> | <bool> | <null>)
+		static constexpr auto rule = identifier + (dsl::p<EqualComparison> | dsl::p<NotEqualComparison> | dsl::p<LessComparison> | dsl::p<GreaterComparison> | dsl::p<LessEqualComparison> | dsl::p<GreaterEqualComparison>) + literalVariant;
+		static constexpr auto value = lexy::construct<Intermediate> | lexy::callback<WhereTransaction::Condition>([](Intermediate&& in){
+			WhereTransaction::Condition out;
+			out.column.name = in.column;
+			out.comp = in.comparison;
+			out.value = in.value;
+			return out;
+		});
+
+		// A AND separated list of conditions
+		struct List {
+			static constexpr auto rule = dsl::list(dsl::p<WhereCondition>, dsl::sep(KW::And));
+			static constexpr auto value = lexy::as_list<std::vector<WhereTransaction::Condition>>;
+		};
+	};
+	static constexpr auto whereCondition = dsl::p<WhereCondition>;
+	static constexpr auto whereConditionList = dsl::p<WhereCondition::List>;
+	static constexpr auto whereConditions = KW::where >> whereConditionList;
 
 
 	// --- Transactions ---
@@ -429,15 +662,17 @@ namespace sql::grammar {
 			ast::Transaction::Action action;
 			std::optional<std::vector<std::string>> columns;
 			std::string ident;
+			std::optional<std::vector<WhereTransaction::Condition>> conditions;
 		};
 
-		// select */<id>,... from <id>;
-		static constexpr auto rule = KW::select + (wildcard | identifierList) + KW::from + identifier + stop;
+		// select */<id>,... from <id> (where <conditions>);
+		static constexpr auto rule = KW::select + (wildcard | identifierList) + KW::from + identifier + dsl::opt(whereConditions) + stop;
 		// Convert the parsed result into a Transcation smart pointer (unified type for all transactions)
-		static constexpr auto value = lexy::construct<Intermediate> | lexy::callback<ast::Transaction::ptr>([](Intermediate&& i) {
+		static constexpr auto value = lexy::construct<Intermediate> | lexy::callback<ast::Transaction::ptr>([](Intermediate&& i) -> ast::Transaction::ptr {
 			using wc = sql::Wildcard<std::vector<std::string>>;
 			wc columns = i.columns.has_value() ? (wc)i.columns.value() : (wc)std::nullopt;
-			return std::make_unique<ast::QueryTableTransaction>(ast::QueryTableTransaction{ast::Transaction::QueryTable, i.action, ast::Transaction::Target{ast::Transaction::Target::Table, i.ident}, columns});
+			auto conditions = i.conditions.has_value() ? *i.conditions : std::vector<WhereTransaction::Condition>{};
+			return std::make_unique<ast::QueryTableTransaction>(ast::QueryTableTransaction{ast::Transaction::QueryTable, i.action, ast::Transaction::Target{ast::Transaction::Target::Table, i.ident}, conditions, columns});
 		});
 	};
 
