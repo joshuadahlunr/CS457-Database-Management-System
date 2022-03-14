@@ -587,7 +587,7 @@ namespace sql::grammar {
 	static constexpr auto columnDeclarationList = dsl::p<ColumnDeclaration::List>;
 
 
-	// A rule that matches a where condition (an identifer followed by a comparison operator followed by a value literal)
+	// A rule that matches a where condition (an identifier followed by a comparison operator followed by a value literal)
 	struct WhereCondition {
 		// Structs that parse a comparison operator
 		struct EqualComparison {
@@ -625,7 +625,7 @@ namespace sql::grammar {
 		static constexpr auto rule = identifier + (dsl::p<EqualComparison> | dsl::p<NotEqualComparison> | dsl::p<LessComparison> | dsl::p<GreaterComparison> | dsl::p<LessEqualComparison> | dsl::p<GreaterEqualComparison>) + literalVariant;
 		static constexpr auto value = lexy::construct<Intermediate> | lexy::callback<WhereTransaction::Condition>([](Intermediate&& in){
 			WhereTransaction::Condition out;
-			out.column.name = in.column;
+			out.column = in.column;
 			out.comp = in.comparison;
 			out.value = in.value;
 			return out;
@@ -736,7 +736,7 @@ namespace sql::grammar {
 
 	// Rule that matches a table insert
 	struct InsertIntoTableTransaction {
-		// Struct that parses a comma seperated list of literals
+		// Struct that parses a comma separated list of literals
 		struct ValueList {
 			static constexpr auto rule = dsl::list(literalVariant, dsl::sep(dsl::comma));
 			static constexpr auto value = lexy::as_list<std::vector<Data::Variant>>;
@@ -813,7 +813,7 @@ namespace sql::grammar {
 
 	// Rule that matches any type of transaction and forwards the resulting smart pointer
 	struct Transaction {
-		static constexpr auto whitespace = ws; // Automatic whitespace
+		static constexpr auto whitespace = wsc; // Automatic whitespace
 		static constexpr auto rule = wss + (dsl::peek(KW::create + KW::database) >> dsl::p<DatabaseTransaction>
 			| dsl::peek(KW::create + KW::table) >> dsl::p<CreateTableTransaction>
 			| dsl::peek(KW::drop + KW::database) >> dsl::p<DatabaseTransaction>

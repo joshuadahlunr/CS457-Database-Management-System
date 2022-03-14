@@ -164,11 +164,13 @@ namespace sql {
 		// Construct some null data
 		static Data null(Column* column = nullptr) { return {{}, column}; }
 
-		void applyColumnAdjustments() {
+		// Apply adjustments so that the data is valid for the column's data type
+		void applyColumnAdjustments() { applyColumnAdjustments(*column, data); }
+		static void applyColumnAdjustments(const Column& column, Variant& data) {
 			// No adjustments needed if the data is null
-			if(isNull()) return;
+			if(data.index() == 0) return;
 
-			switch(column->type.type){
+			switch(column.type.type){
 			// No adjustments needed for bool
 			break; case DataType::BOOL:
 				break;
@@ -184,12 +186,12 @@ namespace sql {
 				std::string str = std::get<std::string>(data);
 
 				// If the string is shorter than the data type, pad it with spaces
-				if(str.size() < column->type.size)
-					for(size_t i = 0, size = column->type.size - str.size(); i < size; i++)
+				if(str.size() < column.type.size)
+					for(size_t i = 0, size = column.type.size - str.size(); i < size; i++)
 						str += " ";
 				// If the string is longer than the data type, truncate it
-				else if(str.size() > column->type.size)
-					str = str.substr(0, column->type.size);
+				else if(str.size() > column.type.size)
+					str = str.substr(0, column.type.size);
 
 				data = str;
 			}
@@ -197,8 +199,8 @@ namespace sql {
 				std::string str = std::get<std::string>(data);
 
 				// If the string is longer than the data type, truncate it	
-				if(str.size() > column->type.size)
-					str = str.substr(0, column->type.size);
+				if(str.size() > column.type.size)
+					str = str.substr(0, column.type.size);
 
 				data = str;
 
@@ -213,6 +215,7 @@ namespace sql {
 
 		// Validates that the variant type correctly matches with the column type
 		// NOTE: our parser treats floats and ints the same <parserValidation> ensures that data straight from the parser is properly validated
+		bool validateVariant(bool parserValidation = false) { return validateVariant(*column, data, parserValidation); }
 		static bool validateVariant(const Column& column, const Variant& v, bool parserValidation = false) {
 			// Null data is always allowed
 			if(v.index() == 0) return true;
@@ -478,7 +481,7 @@ namespace sql {
 			};
 
 			struct Condition {
-				Column column;
+				std::string column;
 				Comparison comp;
 				Data::Variant value;
 			};
@@ -495,7 +498,7 @@ namespace sql {
 		// Struct representing a transaction that updates some values in the table
 		struct UpdateTableTransaction: public WhereTransaction {
 			// Name of the column to be updated
-			std::string target;
+			std::string column;
 			// The value to update in that column
 			Data::Variant value;
 		};

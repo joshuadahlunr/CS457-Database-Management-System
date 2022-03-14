@@ -9,6 +9,7 @@
 
 #include <iostream>
 #include <set>
+#include <numeric>
 #include "reader.hpp"
 #include "SQLparser.hpp"
 
@@ -30,6 +31,8 @@ void drop(const sql::Transaction& transaction, ProgramState& state);
 void alter(const sql::Transaction& transaction, ProgramState& state);
 void insert(const sql::Transaction& transaction, ProgramState& state);
 void query(const sql::Transaction& transaction, ProgramState& state);
+void update(const sql::Transaction& transaction, ProgramState& state);
+void delete_(const sql::Transaction& transaction, ProgramState& state);
 // Execution function prototypes
 void useDatabase(const sql::Transaction& transaction, ProgramState& state, bool quiet = false);
 void createDatabase(const sql::Transaction& transaction, ProgramState& state);
@@ -39,6 +42,8 @@ void dropTable(const sql::Transaction& transaction, ProgramState& state);
 void alterTable(const sql::Transaction& transaction, ProgramState& state);
 void insertIntoTable(const sql::Transaction& transaction, ProgramState& state);
 void queryTable(const sql::Transaction& transaction, ProgramState& state);
+void updateTable(const sql::Transaction& transaction, ProgramState& state);
+void deleteFromTable(const sql::Transaction& transaction, ProgramState& state);
 
 // Function which makes a string lowercase
 std::string tolower(std::string s){
@@ -105,6 +110,10 @@ int main() {
 				insert(*transaction, state);
 			break; case sql::Transaction::Query:
 				query(*transaction, state);
+			break; case sql::Transaction::Update:
+				update(*transaction, state);
+			break; case sql::Transaction::Delete:
+				delete_(*transaction, state);
 			// If the action is unsupported, error
 			break; default:
 				throw std::runtime_error("!Unsupported action: " + sql::Transaction::ActionNames[transaction->action]);
@@ -186,6 +195,28 @@ inline void query(const sql::Transaction& transaction, ProgramState& state){
 	}
 }
 
+// Function which executes the proper UPDATE function based on the statement target
+inline void update(const sql::Transaction& transaction, ProgramState& state){
+	switch(transaction.target.type){
+	break; case sql::Transaction::Target::Table:
+		updateTable(transaction, state);
+	// If the action is unsupported for this target, error
+	break; default:
+		std::cerr << "!Can not UPDATE a " << sql::Transaction::Target::TypeNames[transaction.target.type] << "." << std::endl;
+	}
+}
+
+// Function which executes the proper DELETE function based on the statement target
+inline void delete_(const sql::Transaction& transaction, ProgramState& state){
+	switch(transaction.target.type){
+	break; case sql::Transaction::Target::Table:
+		deleteFromTable(transaction, state);
+	// If the action is unsupported for this target, error
+	break; default:
+		std::cerr << "!Can not DELETE from a " << sql::Transaction::Target::TypeNames[transaction.target.type] << "." << std::endl;
+	}
+}
+
 
 // --- Helpers ---
 
@@ -230,6 +261,78 @@ bool loadTable(sql::Table& table, const sql::Database& database, std::string ope
 	// If we failed for any reason then close the file and return false
 	fin.close();
 	return false;
+}
+
+// Helper function that returns a set of indecies representing tuples that satisfy the where conditions in the provided transaction
+std::vector<size_t> applyWhereConditions(sql::Table& table, sql::WhereTransaction& transaction, std::string_view operation) {
+	// For each condition, find its associated column and validate its data
+	std::vector<size_t> conditionColumns;
+	for(auto& condition: transaction.conditions){
+		size_t index = -1;
+		for(size_t i = 0; i < table.columns.size(); i++)
+			if(table.columns[i].name == condition.column){
+				index = i;
+				break;
+			}
+		if(index == -1){
+			std::cerr << "!Failed to " << operation << " table " << transaction.target.name << " because it doesn't contain a condition column named " << condition.column << "." << std::endl;
+			return {};
+		}
+		// Save the column index of this condition
+		conditionColumns.push_back(index);
+
+		// Validate and adjust the condition's value
+		const sql::Column& column = table.columns[index];
+		if(!sql::Data::validateVariant(column, condition.value, /*parserValidation*/ true)){
+			std::cerr << "!Failed to " << operation << " table " << transaction.target.name << " because column " << column.name
+				<< " in condition has type " << column.type.to_string() << " but comparision data of type "
+				<< sql::Data::variantTypeString(condition.value) << " provided." << std::endl;
+			return {};
+		}
+		sql::Data::applyColumnAdjustments(column, condition.value);
+	}
+
+	// For each tuple...
+	std::vector<size_t> selectedTuples;
+	for(size_t i = 0; i < table.tuples.size(); i++){
+		sql::Tuple& tuple = table.tuples[i];
+
+		// Check how many of the conditions hold true for that tuple
+		size_t validations = 0;
+		for(size_t i = 0; i < transaction.conditions.size(); i++){
+			const sql::Data::Variant& data = tuple[conditionColumns[i]].data;
+			auto& condition = transaction.conditions[i];
+
+			switch (condition.comp){
+			break; case sql::WhereTransaction::equal:
+				if(data == condition.value)
+					validations++;
+			break; case sql::WhereTransaction::notEqual:
+				if(data != condition.value)
+					validations++;
+			break; case sql::WhereTransaction::less:
+				if(data < condition.value)
+					validations++;
+			break; case sql::WhereTransaction::greater:
+				if(data > condition.value)
+					validations++;
+			break; case sql::WhereTransaction::lessEqual:
+				if(data <= condition.value)
+					validations++;
+			break; case sql::WhereTransaction::greaterEqual:
+				if(data >= condition.value)
+					validations++;
+			break; default:
+				throw std::runtime_error("Unexpected condition");
+			}
+		}
+
+		// If all of the conditions hold we need to apply changes to this tuple
+		if(validations == transaction.conditions.size())
+			selectedTuples.push_back(i);
+	}
+
+	return selectedTuples;
 }
 
 
@@ -433,14 +536,18 @@ void alterTable(const sql::Transaction& _transaction, ProgramState& state){
 	if(!loadTable(table, database, "alter"))
 		return;
 
+	// Find the index of the target column
+	size_t index = -1;
+	for(int i = 0; i < table.columns.size(); i++)
+		if(table.columns[i].name == transaction.alterTarget.name) {
+			index = i;
+			break;
+		}
+
 	// Determine how to procede based on the secondary alter action
 	switch(transaction.alterAction){
 	break; case sql::Transaction::Add: {
 		// Make sure sure that the column isn't in the metadata, error if present
-		size_t index = -1;
-		for(int i = 0; i < table.columns.size(); i++)
-			if(table.columns[i].name == transaction.alterTarget.name)
-				index = i;
 		if(index != -1){
 			std::cerr << "!Failed to add " << transaction.alterTarget.name << " because it already exists in " << table.name << "." << std::endl;
 			return;
@@ -455,10 +562,6 @@ void alterTable(const sql::Transaction& _transaction, ProgramState& state){
 	}
 	break; case sql::Transaction::Remove: {
 		// Find the column's index in the table, error if not present
-		size_t index = -1;
-		for(int i = 0; i < table.columns.size(); i++)
-			if(table.columns[i].name == transaction.alterTarget.name)
-				index = i;
 		if(index == -1){
 			std::cerr << "!Failed to remove " << transaction.alterTarget.name << " because it doesn't exist in " << table.name << "." << std::endl;
 			return;
@@ -473,10 +576,6 @@ void alterTable(const sql::Transaction& _transaction, ProgramState& state){
 	}
 	break; case sql::Transaction::Alter: {
 		// Find the column's index in the table, error if not present
-		size_t index = -1;
-		for(int i = 0; i < table.columns.size(); i++)
-			if(table.columns[i].name == transaction.alterTarget.name)
-				index = i;
 		if(index == -1){
 			std::cerr << "!Failed to modify " << transaction.alterTarget.name << " because it doesn't exist in " << table.name << "." << std::endl;
 			return;
@@ -563,7 +662,7 @@ void queryTable(const sql::Transaction& _transaction, ProgramState& state){
 	// Sanity checked downcast to the special type of transaction used by this function
 	if(_transaction.action != sql::Transaction::Query)
 		throw std::runtime_error("A parsing issue has occured! Somehow a non-QueryTableTransaction has arrived in queryTable");
-	const sql::QueryTableTransaction& transaction = *reinterpret_cast<const sql::QueryTableTransaction*>(&_transaction);
+	sql::QueryTableTransaction& transaction = const_cast<sql::QueryTableTransaction&>(*reinterpret_cast<const sql::QueryTableTransaction*>(&_transaction));
 
 	// Make sure that a database is currently being used
 	if(!state.currentDatabase.has_value()){
@@ -581,7 +680,57 @@ void queryTable(const sql::Transaction& _transaction, ProgramState& state){
 	if(!loadTable(table, database, "query"))
 		return;
 
-	// If the table has no data then there is nothing to display
+	// Select tuples
+	if(!transaction.conditions.empty()){
+		// Filter out all of the tuples that don't satisfy the conditions
+		auto selectedTuples = applyWhereConditions(table, transaction, "query");
+		if(selectedTuples.empty())
+			return;
+
+		// Move the selected tuples into a new array
+		std::vector<sql::Tuple> tuples;
+		for(size_t i: selectedTuples)
+			tuples.emplace_back(std::move(table.tuples[i]));
+
+		// The array of selected tuples becomes the table's list of tuples
+		table.tuples = std::move(tuples);
+	}
+
+	// Project tuples (if we aren't selecting all of them)
+	if(!transaction.columns.all()){
+		// Calculate the indecies of the tuples we need to keep in the projection
+		std::vector<size_t> columnsToKeep;
+		for(std::string column: *transaction.columns){
+			size_t index = -1;
+			for(int i = 0; i < table.columns.size(); i++)
+				if(table.columns[i].name == column) {
+					index = i;
+					break;
+				}
+			if(index == -1){
+				std::cerr << "!Failed to query table " << table.name << " because projection column " << column << " doesn't exist." << std::endl;
+				return;
+			}
+
+			columnsToKeep.push_back(index);
+		}
+
+		// Copy the columns we should keep into a new temporary table
+		sql::Table projectedTable;
+		for(size_t i: columnsToKeep)
+			projectedTable.columns.emplace_back(table.columns[i]);
+		for(sql::Tuple& tuple: table.tuples){
+			sql::Tuple& projectedTuple = projectedTable.createEmptyTuple();
+			size_t i = 0;
+			for(size_t keep: columnsToKeep)
+				projectedTuple[i++].data = tuple[keep].data;
+		}
+
+		// Replace the table with the new projection
+		table = std::move(projectedTable);		
+	}
+
+	// If the table has no metadata then there is nothing to display
 	if(table.columns.empty())
 		return;
 
@@ -592,7 +741,6 @@ void queryTable(const sql::Transaction& _transaction, ProgramState& state){
 	std::cout << std::endl;
 
 	// Print out the data
-	// TODO: Better formatting!
 	for(sql::Tuple& t: table.tuples){
 		bool first = true;
 		for(sql::Data& d: t) {
@@ -606,5 +754,98 @@ void queryTable(const sql::Transaction& _transaction, ProgramState& state){
 		}
 		std::cout << std::endl;
 	}
+}
 
+// Function which updates the data in a table
+void updateTable(const sql::Transaction& _transaction, ProgramState& state){
+	// Sanity checked downcast to the special type of transaction used by this function
+	if(_transaction.action != sql::Transaction::Update)
+		throw std::runtime_error("A parsing issue has occured! Somehow a non-UpdateTableTransaction has arrived in updateTable");
+	sql::UpdateTableTransaction& transaction = const_cast<sql::UpdateTableTransaction&>(*reinterpret_cast<const sql::UpdateTableTransaction*>(&_transaction));
+
+	// Make sure that a database is currently being used
+	if(!state.currentDatabase.has_value()){
+		std::cerr << "!Failed to update table " << transaction.target.name << " because no database is currently being used." << std::endl;
+		return;
+	}
+	sql::Database& database = *state.currentDatabase;
+
+	// Create a temporary table and set its metadata
+	sql::Table table;
+	table.name = transaction.target.name;
+	table.path = database.path / (table.name + ".table");
+
+	// Load the table from disk (helper handles ensuring that it exists)
+	if(!loadTable(table, database, "update"))
+		return;
+
+	// Find the column index that we are updating (error if it doesn't exist)
+	size_t columnIndex = -1;
+	for(size_t i = 0; i < table.columns.size(); i++)
+		if(table.columns[i].name == transaction.column){
+			columnIndex = i;
+			break;
+		}
+	if(columnIndex == -1){
+		std::cerr << "!Failed to update table " << transaction.target.name << " because it doesn't contain a column named " << transaction.column << "." << std::endl;
+		return;
+	}
+
+	// Filter out all of the tuples that don't satisfy the conditions
+	auto selectedTuples = applyWhereConditions(table, transaction, "update");
+	if(selectedTuples.empty())
+		return;
+
+	// Update the value in tuples where all of the conditions hold
+	for(size_t tupleIndex: selectedTuples)
+		table.tuples[tupleIndex][columnIndex].data = transaction.value;
+
+	std::cout << selectedTuples.size() << " record" << (selectedTuples.size() > 1 ? "s" : "") << " modified." << std::endl;
+	
+	// Save changes to disk
+	saveTableFile(table);
+}
+
+// Function which deletes some data from a table
+void deleteFromTable(const sql::Transaction& _transaction, ProgramState& state){
+	// Sanity checked downcast to the special type of transaction used by this function
+	if(_transaction.action != sql::Transaction::Delete)
+		throw std::runtime_error("A parsing issue has occured! Somehow a non-DeleteFromTableTransaction has arrived in updateTable");
+	sql::DeleteFromTableTransaction& transaction = const_cast<sql::DeleteFromTableTransaction&>(*reinterpret_cast<const sql::DeleteFromTableTransaction*>(&_transaction));
+
+	// Make sure that a database is currently being used
+	if(!state.currentDatabase.has_value()){
+		std::cerr << "!Failed to update table " << transaction.target.name << " because no database is currently being used." << std::endl;
+		return;
+	}
+	sql::Database& database = *state.currentDatabase;
+
+	// Create a temporary table and set its metadata
+	sql::Table table;
+	table.name = transaction.target.name;
+	table.path = database.path / (table.name + ".table");
+
+	// Load the table from disk (helper handles ensuring that it exists)
+	if(!loadTable(table, database, "delete from"))
+		return;
+
+	// Filter out all of the tuples that don't satisfy the conditions
+	auto selectedTuples = applyWhereConditions(table, transaction, "delete from");
+	if(selectedTuples.empty())
+		return;
+
+	// Remove all of the selected tuples from the table
+	size_t selectedSize = selectedTuples.size();
+	for(size_t i = 0; i < selectedSize; i++){
+		table.tuples.erase(table.tuples.begin() + selectedTuples[0]);
+		selectedTuples.erase(selectedTuples.begin());
+
+		for(size_t& index: selectedTuples)
+			index--;
+	}
+
+	std::cout << selectedSize << " record" << (selectedSize > 1 ? "s" : "") << " deleted." << std::endl;
+	
+	// Save changes to disk
+	saveTableFile(table);
 }
