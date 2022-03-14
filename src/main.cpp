@@ -8,11 +8,12 @@
  *------------------------------------------------------------*/
 
 #include <iostream>
+#include <set>
 #include "reader.hpp"
 #include "SQLparser.hpp"
 
 // Constant representing the filename of database metadata files
-inline constexpr const char* metadataFile = ".metadata";
+constexpr const char* metadataFileName = ".metadata";
 
 // Struct storing the state of the program
 struct ProgramState {
@@ -176,7 +177,7 @@ inline void query(const sql::Transaction& transaction, ProgramState& state){
 
 // Helper function that saves a database's metadata
 void saveDatabaseMetadataFile(const sql::Database database){
-	simple::file_ostream<std::true_type> fout((database.path / metadataFile).c_str());
+	simple::file_ostream<std::true_type> fout((database.path / metadataFileName).c_str());
 	fout << database;
 	fout.close();
 }
@@ -196,7 +197,7 @@ bool loadTable(sql::Table& table, const sql::Database& database, std::string ope
 		return false;
 	}
 
-	// Ensure that the table exists and load it
+	// Ensure that the table exists on disk and load it
 	if(!exists(table.path)){
 		std::cerr << "!Failed to " << operation << " table " << table.name << " because it does not exist." << std::endl;
 		return false;
@@ -204,14 +205,15 @@ bool loadTable(sql::Table& table, const sql::Database& database, std::string ope
 	simple::file_istream<std::true_type> fin(table.path.c_str());
 	try {
 		// Load the table
-		sql::Table table;
 		fin >> table;
+		fin.close();
 		return true;
 	} catch(std::runtime_error) {
 		std::cerr << "!Failed to " << operation << " table " << table.name << " because it is corupted." << std::endl;
 	}
 
-	// If we failed for any reason then return false
+	// If we failed for any reason then close the file and return false
+	fin.close();
 	return false;
 }
 
@@ -234,11 +236,11 @@ void useDatabase(const sql::Transaction& transaction, ProgramState& state, bool 
 	}
 
 	// Open the database's metadata file (ensuring it exists)
-	if(!exists(database.path / metadataFile)){
+	if(!exists(database.path / metadataFileName)){
 		std::cerr << "!Failed to use database " << database.name << " because its metadata doesn't exist." << std::endl;
 		return;
 	}
-	simple::file_istream<std::true_type> fin((database.path / metadataFile).c_str());
+	simple::file_istream<std::true_type> fin((database.path / metadataFileName).c_str());
 	try {
 		// Load the database's metadata file
 		fin >> database;
@@ -335,6 +337,20 @@ void createTable(const sql::Transaction& _transaction, ProgramState& state){
 		std::cerr << "!Failed to create table " << table.name << " because it already exists." << std::endl;
 		return;
 	}
+
+	// Ensure that none of the columns share the same name
+	std::set<std::string> columnNames;
+	bool duplicates = false;
+	for(const sql::Column& c: transaction.columns) {
+		if(columnNames.find(c.name) != columnNames.end()) {
+			std::cerr << "!Failed to create table " << table.name << " because it has at least two columns named: " << c.name << "." << std::endl;
+			duplicates = true;
+		}
+
+		columnNames.insert(c.name);
+	}
+	if(duplicates) return;
+	
 	// Set the table's column metadata
 	table.columns = transaction.columns;
 	// Add the table to the database's metadata
@@ -419,8 +435,8 @@ void alterTable(const sql::Transaction& _transaction, ProgramState& state){
 
 		// Add the new column and add null data to represent it
 		table.columns.push_back(transaction.alterTarget);
-		for(sql::Record& record: table.records)
-			record.emplace_back(sql::Data::null(&table.columns.back()));
+		for(sql::Tuple& tuple: table.tuples)
+			tuple.emplace_back(sql::Data::null(&table.columns.back()));
 
 		std::cout << "Table " << table.name << " modified, added " << transaction.alterTarget.name << "." << std::endl;
 	}
@@ -435,10 +451,10 @@ void alterTable(const sql::Transaction& _transaction, ProgramState& state){
 			return;
 		}
 
-		// Remove the column from the metadata and from each record
+		// Remove the column from the metadata and from each tuple
 		table.columns.erase(table.columns.begin() + index);
-		for(sql::Record& record: table.records)
-			record.erase(record.begin() + index);
+		for(sql::Tuple& tuple: table.tuples)
+			tuple.erase(tuple.begin() + index);
 
 		std::cout << "Table " << table.name << " modified, removed " << transaction.alterTarget.name << "." << std::endl;
 	}
@@ -455,8 +471,8 @@ void alterTable(const sql::Transaction& _transaction, ProgramState& state){
 
 		// Update the target column and nullify all of the data in that column
 		table.columns[index] = transaction.alterTarget;
-		for(sql::Record& record: table.records)
-			record[index] = sql::Data::null(&table.columns[index]);
+		for(sql::Tuple& tuple: table.tuples)
+			tuple[index] = sql::Data::null(&table.columns[index]);
 
 		std::cout << "Table " << table.name << " modified, modified " << transaction.alterTarget.name << "." << std::endl;
 	}
@@ -484,7 +500,7 @@ void queryTable(const sql::Transaction& _transaction, ProgramState& state){
 	}
 	sql::Database& database = *state.currentDatabase;
 
-	// Create a table and set its metadata
+	// Create a temporary table and set its metadata
 	sql::Table table;
 	table.name = transaction.target.name;
 	table.path = database.path / (table.name + ".table");

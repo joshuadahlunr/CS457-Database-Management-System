@@ -269,9 +269,17 @@ namespace sql::grammar {
 	} // KW
 
 	// Types
-	// int, float, char, varchar, text
+	// bool, int, float, char, varchar, text
 
 	namespace Type {
+		// Rule that matches the BOOL type
+		struct BOOL: lexy::token_production {
+			static constexpr auto rule = UL::b + UL::o + UL::o + UL::l;
+			static constexpr auto value = lexy::constant(DataType{DataType::BOOL});
+		};
+		// BOOL type token
+		static constexpr auto tBOOL = dsl::peek(UL::b) >> dsl::p<BOOL>;
+
 		// Rule that matches the INT type
 		struct INT: lexy::token_production {
 			static constexpr auto rule = UL::i + UL::n + UL::t;
@@ -318,7 +326,7 @@ namespace sql::grammar {
 
 
 		// Rule with all of the valid types merged together
-		static constexpr auto anyType = tINT | tFLOAT | tCHAR | tVARCHAR | tTEXT;
+		static constexpr auto anyType = tBOOL | tINT | tFLOAT | tCHAR | tVARCHAR | tTEXT;
 	} // Type
 
 

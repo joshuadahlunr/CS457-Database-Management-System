@@ -4,7 +4,7 @@
  * Email: joshuadahl@nevada.unr.edu
  * Created: 2/7/22
  * Modified: 2/7/22
- * Description: Provides several data structs which hold database, tables, columns, records, etc...,
+ * Description: Provides several data structs which hold database, tables, columns, tuples, etc...,
  * 				also provides transactions the the parser creates as well as serialization for these things.
  *------------------------------------------------------------*/
 
@@ -53,7 +53,7 @@ namespace sql {
 	// Forward declarations
 	struct Database;
 	struct Table;
-	struct Record;
+	struct Tuple;
 
 	// Wrapper around std::optional that provides support for replacing values with a wildcard
 	template<typename T>
@@ -71,6 +71,7 @@ namespace sql {
 	struct DataType {
 		enum Type {
 			Invalid,
+			BOOL,
 			INT,
 			FLOAT,
 			CHAR,
@@ -86,6 +87,8 @@ namespace sql {
 		// Function which converts a datatype to a string
 		std::string to_string() const {
 			switch(type){
+			break; case BOOL:
+				return "bool";
 			break; case INT:
 				return "int";
 			break; case FLOAT:
@@ -96,8 +99,8 @@ namespace sql {
 				return "varchar(" + std::to_string(size) + ")";
 			break; case TEXT:
 				return "text";
-			default:
-				return "unknown-type";
+			break; default:
+				throw std::runtime_error("Unknown type");
 			}
 		}
 	};
@@ -141,7 +144,7 @@ namespace sql {
 		size_t size;
 		s >> size;
 		v.resize(size);
-		for(int i = 0; i < size; i++)
+		for(size_t i = 0; i < size; i++)
 			s >> v[i];
 		return s;
 	}
@@ -151,11 +154,11 @@ namespace sql {
 	struct Data {
 		// Pointer to the column this piece of data belongs to (must be set for serialization to be possible)
 		Column* column = nullptr;
-		// // Pointer to the record (row) this piece of data belongs to
-		// Record* record;
+		// // Pointer to the tuple (row) this piece of data belongs to
+		// Tuple* tuple;
 
 		// The stored data
-		using Variant = std::variant<std::monostate, int64_t, double, std::string>;
+		using Variant = std::variant<std::monostate, bool, int64_t, double, std::string>;
 		Variant data;
 
 		// Check if the stored data is null
@@ -180,6 +183,11 @@ namespace sql {
 		if(!bool(null)) {
 			// If the data isn't null, we use the column pointer to determine how to deserialize the data
 			switch(d.column->type.type){
+			break; case DataType::BOOL: {
+				bool data;
+				s >> data;
+				d.data = data;
+			}
 			break; case DataType::INT: {
 				int64_t data;
 				s >> data;
@@ -197,6 +205,8 @@ namespace sql {
 				s >> data;
 				d.data = data;
 			}
+			break; default:
+				throw std::runtime_error("Unexpected data type");
 			}
 		} else
 			d.data = {};
@@ -204,26 +214,26 @@ namespace sql {
 	}
 
 
-	// Struct representing a row in the table (this class is a thing wrapper around std::vector)
-	struct Record: public std::vector<Data> {
-		// Pointer to the table this record belongs to
+	// Struct representing a row in the table (this class is a thin wrapper around std::vector)
+	struct Tuple: public std::vector<Data> {
+		// Pointer to the table this tuple belongs to
 		Table* table = nullptr;
 
 		using std::vector<Data>::vector;
 	};
-	// Record De/serialization
-	template<typename same_endian_type> typename simple::file_ostream<same_endian_type>& operator << ( simple::file_ostream<same_endian_type>& s, const Record& r) {
-		s << r.size();
-		for(Data& d: r)
+	// Tuple De/serialization
+	template<typename same_endian_type> typename simple::file_ostream<same_endian_type>& operator << (simple::file_ostream<same_endian_type>& s, const Tuple& t) {
+		s << t.size();
+		for(Data& d: t)
 			s << d;
 		return s;
 	}
-	template<typename same_endian_type> typename simple::file_istream<same_endian_type>& operator >> ( simple::file_istream<same_endian_type>& s, Record& r) {
+	template<typename same_endian_type> typename simple::file_istream<same_endian_type>& operator >> (simple::file_istream<same_endian_type>& s, Tuple& t) {
 		size_t size;
 		s >> size;
-		r.resize(size);
+		t.resize(size);
 		for(size_t i = 0; i < size; i++)
-			s >> r[i];
+			s >> t[i];
 		return s;
 	}
 
@@ -239,16 +249,16 @@ namespace sql {
 		// The columns of this table
 		std::vector<Column> columns;
 
-		// The records this table is storing
-		std::vector<Record> records;
+		// The tuples this table is storing
+		std::vector<Tuple> tuples;
 	};
 	// Table De/serialization
 	template<typename same_endian_type> typename simple::file_ostream<same_endian_type>& operator << ( simple::file_ostream<same_endian_type>& s, const Table& t) {
-		return s << "TABLE" << t.name << t.path << t.columns << t.records;
+		return s << "TABLE" << t.name << t.path << t.columns << t.tuples;
 	}
 	template<typename same_endian_type> typename simple::file_istream<same_endian_type>& operator >> ( simple::file_istream<same_endian_type>& s, Table& t) {
 		std::string table;
-		return s >> table >> t.name >> t.path >> t.columns >> t.records;
+		return s >> table >> t.name >> t.path >> t.columns >> t.tuples;
 	}
 
 	// Struct representing a database
