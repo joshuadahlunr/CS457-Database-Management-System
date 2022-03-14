@@ -28,6 +28,7 @@ void use(const sql::Transaction& transaction, ProgramState& state);
 void create(const sql::Transaction& transaction, ProgramState& state);
 void drop(const sql::Transaction& transaction, ProgramState& state);
 void alter(const sql::Transaction& transaction, ProgramState& state);
+void insert(const sql::Transaction& transaction, ProgramState& state);
 void query(const sql::Transaction& transaction, ProgramState& state);
 // Execution function prototypes
 void useDatabase(const sql::Transaction& transaction, ProgramState& state, bool quiet = false);
@@ -36,6 +37,7 @@ void createTable(const sql::Transaction& transaction, ProgramState& state);
 void dropDatabase(const sql::Transaction& transaction, ProgramState& state);
 void dropTable(const sql::Transaction& transaction, ProgramState& state);
 void alterTable(const sql::Transaction& transaction, ProgramState& state);
+void insertIntoTable(const sql::Transaction& transaction, ProgramState& state);
 void queryTable(const sql::Transaction& transaction, ProgramState& state);
 
 // Function which makes a string lowercase
@@ -99,6 +101,8 @@ int main() {
 				drop(*transaction, state);
 			break; case sql::Transaction::Alter:
 				alter(*transaction, state);
+			break; case sql::Transaction::Insert:
+				insert(*transaction, state);
 			break; case sql::Transaction::Query:
 				query(*transaction, state);
 			// If the action is unsupported, error
@@ -157,6 +161,17 @@ inline void alter(const sql::Transaction& transaction, ProgramState& state){
 	// If the action is unsupported for this target, error
 	break; default:
 		std::cerr << "!Can not ALTER a " << sql::Transaction::Target::TypeNames[transaction.target.type] << "." << std::endl;
+	}
+}
+
+// Function which executes the proper QUERY function based on the statement target
+inline void insert(const sql::Transaction& transaction, ProgramState& state){
+	switch(transaction.target.type){
+	break; case sql::Transaction::Target::Table:
+		insertIntoTable(transaction, state);
+	// If the action is unsupported for this target, error
+	break; default:
+		std::cerr << "!Can not INSERT into a " << sql::Transaction::Target::TypeNames[transaction.target.type] << "." << std::endl;
 	}
 }
 
@@ -483,6 +498,66 @@ void alterTable(const sql::Transaction& _transaction, ProgramState& state){
 	saveTableFile(table);
 }
 
+// Function which inserts a new tuple into a table
+void insertIntoTable(const sql::Transaction& _transaction, ProgramState& state){
+	// Sanity checked downcast to the special type of transaction used by this function
+	if(_transaction.action != sql::Transaction::Insert)
+		throw std::runtime_error("A parsing issue has occured! Somehow a non-InsertIntoTableTransaction has arrived in insertIntoTable");
+	const sql::InsertIntoTableTransaction& transaction = *reinterpret_cast<const sql::InsertIntoTableTransaction*>(&_transaction);
+
+	// Make sure that a database is currently being used
+	if(!state.currentDatabase.has_value()){
+		std::cerr << "!Failed to insert into table " << transaction.target.name << " because no database is currently being used." << std::endl;
+		return;
+	}
+	sql::Database& database = *state.currentDatabase;
+
+	// Create a temporary table and set its metadata
+	sql::Table table;
+	table.name = transaction.target.name;
+	table.path = database.path / (table.name + ".table");
+
+	// Load the table from disk (helper handles ensuring that it exists)
+	if(!loadTable(table, database, "insert into"))
+		return;
+
+	// Create a new empty tuple in the table
+	sql::Tuple& tuple = table.createEmptyTuple();
+	// Ensure that the user didn't provide more data than the table can hold (less is fine)
+	if(transaction.values.size() > tuple.size()){
+		std::cerr << "!Failed to insert into table " << transaction.target.name << " expected no more than " << tuple.size()
+			<< " pieces of data but " << transaction.values.size() << " recieved." << std::endl;
+		return;
+	}
+	
+	bool valid = true;
+	// For each piece of data the user provided...
+	for(size_t i = 0; i < transaction.values.size(); i++) {
+		// Ensure that the data the user provided is of the correct type
+		if(!sql::Data::validateVariant(table.columns[i], transaction.values[i], /*parserValidation*/ true)){
+			std::cerr << "!Failed to insert into table " << transaction.target.name << " because column " << table.columns[i].name
+				<< " has type " << table.columns[i].type.to_string() << " but data of type "
+				<< sql::Data::variantTypeString(transaction.values[i]) << " provided." << std::endl;
+			valid = false;
+			continue;
+		}
+
+		// If the data is of the correct type copy it into the table
+		tuple[i].data = transaction.values[i];
+	}
+	// We are done if any of the data was of the incorrect type
+	if(!valid) return;
+
+	// Apply any nessicary adjustments to make the data valid
+	for(sql::Data& data: tuple)
+		data.applyColumnAdjustments();
+
+	std::cout << "1 new record inserted." << std::endl;
+
+	// Save changes to disk
+	saveTableFile(table);
+}
+
 // Function which performs a query on the data in a table
 void queryTable(const sql::Transaction& _transaction, ProgramState& state){
 	// Sanity checked downcast to the special type of transaction used by this function
@@ -515,4 +590,21 @@ void queryTable(const sql::Transaction& _transaction, ProgramState& state){
 	for(int i = 1; i < table.columns.size(); i++)
 		std::cout << " | " << table.columns[i].name << " " << table.columns[i].type.to_string();
 	std::cout << std::endl;
+
+	// Print out the data
+	// TODO: Better formatting!
+	for(sql::Tuple& t: table.tuples){
+		bool first = true;
+		for(sql::Data& d: t) {
+			std::visit([first](auto v){
+				if(!first) std::cout << " | ";
+
+				if constexpr(std::is_same_v<decltype(v), std::monostate>) std::cout << "null";
+				else std::cout << v;
+			}, d.data);
+			first = false;
+		}
+		std::cout << std::endl;
+	}
+
 }

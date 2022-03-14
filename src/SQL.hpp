@@ -152,19 +152,98 @@ namespace sql {
 
 	// Struct representing one piece of data stored in a column
 	struct Data {
-		// Pointer to the column this piece of data belongs to (must be set for serialization to be possible)
-		Column* column = nullptr;
-		// // Pointer to the tuple (row) this piece of data belongs to
-		// Tuple* tuple;
-
 		// The stored data
 		using Variant = std::variant<std::monostate, bool, int64_t, double, std::string>;
 		Variant data;
 
+		// Pointer to the column this piece of data belongs to (must be set for serialization to be possible)
+		Column* column = nullptr;
+
 		// Check if the stored data is null
 		bool isNull() const { return data.index() == 0; }
 		// Construct some null data
-		static Data null(Column* column = nullptr) { return {column, {}}; }
+		static Data null(Column* column = nullptr) { return {{}, column}; }
+
+		void applyColumnAdjustments() {
+			// No adjustments needed if the data is null
+			if(isNull()) return;
+
+			switch(column->type.type){
+			// No adjustments needed for bool
+			break; case DataType::BOOL:
+				break;
+			// If the column is of type int, convert float data to int
+			break; case DataType::INT:
+				if(data.index() == 3)
+					data = (int64_t) std::get<double>(data);
+			// If the column is of type float, convert int data to float
+			break; case DataType::FLOAT:
+				if(data.index() == 2)
+					data = (double) std::get<int64_t>(data);
+			break; case DataType::CHAR:{
+				std::string str = std::get<std::string>(data);
+
+				// If the string is shorter than the data type, pad it with spaces
+				if(str.size() < column->type.size)
+					for(size_t i = 0, size = column->type.size - str.size(); i < size; i++)
+						str += " ";
+				// If the string is longer than the data type, truncate it
+				else if(str.size() > column->type.size)
+					str = str.substr(0, column->type.size);
+
+				data = str;
+			}
+			break; case DataType::VARCHAR:{
+				std::string str = std::get<std::string>(data);
+
+				// If the string is longer than the data type, truncate it	
+				if(str.size() > column->type.size)
+					str = str.substr(0, column->type.size);
+
+				data = str;
+
+			}
+			// No adjustments needed for text
+			break; case DataType::TEXT:
+				break;
+			break; default:
+				throw std::runtime_error("Unknown type");
+			}
+		}
+
+		// Validates that the variant type correctly matches with the column type
+		// NOTE: our parser treats floats and ints the same <parserValidation> ensures that data straight from the parser is properly validated
+		static bool validateVariant(const Column& column, const Variant& v, bool parserValidation = false) {
+			// Null data is always allowed
+			if(v.index() == 0) return true;
+
+			switch(column.type.type){
+			break; case DataType::BOOL:
+				return v.index() == 1;
+			break; case DataType::INT:
+				return v.index() == 2 || (v.index() == 3 && parserValidation);
+			break; case DataType::FLOAT:
+				return (v.index() == 2 && parserValidation) || v.index() == 3;
+			break; case DataType::CHAR:
+			case DataType::VARCHAR:
+			case DataType::TEXT:
+				return v.index() == 4;
+			break; default:
+				throw std::runtime_error("Unknown type");
+			}
+		}
+
+		static std::string variantTypeString(const Variant& v) {
+			switch(v.index()){
+			break; case 0: return "Null Literal";
+			break; case 1: return "Boolean Literal";
+			break; case 2: return "Integer Literal";
+			break; case 3: return "Number Literal";
+			break; case 4: return "String Literal";
+			break; default:
+				throw std::runtime_error("Variant in invalid state");
+			}
+		}
 	};
 	// Data De/serialization
 	template<typename same_endian_type> typename simple::file_ostream<same_endian_type>& operator << ( simple::file_ostream<same_endian_type>& s, const Data& d) {
@@ -224,7 +303,7 @@ namespace sql {
 	// Tuple De/serialization
 	template<typename same_endian_type> typename simple::file_ostream<same_endian_type>& operator << (simple::file_ostream<same_endian_type>& s, const Tuple& t) {
 		s << t.size();
-		for(Data& d: t)
+		for(const Data& d: t)
 			s << d;
 		return s;
 	}
@@ -234,6 +313,21 @@ namespace sql {
 		t.resize(size);
 		for(size_t i = 0; i < size; i++)
 			s >> t[i];
+		return s;
+	}
+	// Vector of tuple De/serialization
+	template<typename same_endian_type> typename simple::file_ostream<same_endian_type>& operator << ( simple::file_ostream<same_endian_type>& s, const std::vector<Tuple>& v) {
+		s << v.size();
+		for(const Tuple& c: v)
+			s << c;
+		return s;
+	}
+	template<typename same_endian_type> typename simple::file_istream<same_endian_type>& operator >> ( simple::file_istream<same_endian_type>& s, std::vector<Tuple>& v) {
+		size_t size;
+		s >> size;
+		v.resize(size);
+		for(size_t i = 0; i < size; i++)
+			s >> v[i];
 		return s;
 	}
 
@@ -251,6 +345,17 @@ namespace sql {
 
 		// The tuples this table is storing
 		std::vector<Tuple> tuples;
+
+		// Function which creates a new tuple
+		Tuple& createEmptyTuple(){
+			tuples.emplace_back();
+			Tuple& out = tuples.back();
+			out.table = this;
+
+			for(Column& column: columns)
+				out.emplace_back(std::move(Data::null(&column)));
+			return out;
+		}
 	};
 	// Table De/serialization
 	template<typename same_endian_type> typename simple::file_ostream<same_endian_type>& operator << ( simple::file_ostream<same_endian_type>& s, const Table& t) {
@@ -258,7 +363,14 @@ namespace sql {
 	}
 	template<typename same_endian_type> typename simple::file_istream<same_endian_type>& operator >> ( simple::file_istream<same_endian_type>& s, Table& t) {
 		std::string table;
-		return s >> table >> t.name >> t.path >> t.columns >> t.tuples;
+		size_t numTuples;
+		s >> table >> t.name >> t.path >> t.columns >> numTuples;
+		for(int i = 0; i < numTuples; i++) {
+			Tuple& tuple = t.createEmptyTuple();
+			s >> tuple;
+		}
+
+		return s;
 	}
 
 	// Struct representing a database
@@ -270,8 +382,6 @@ namespace sql {
 		std::filesystem::path path;
 		// Relative filesystem paths to the tables this database manages
 		std::vector<std::filesystem::path> tables;
-
-		std::map<std::string, std::shared_ptr<Table>> tableMap; // TODO: should this map, map paths to tables? // TODO: Remove?
 	};
 	// Database De/serialization
 	template<typename same_endian_type> typename simple::file_ostream<same_endian_type>& operator << ( simple::file_ostream<same_endian_type>& s, const Database& d) {
@@ -354,6 +464,7 @@ namespace sql {
 			// The values to be inserted
 			std::vector<Data::Variant> values;
 		};
+
 
 		// Struct representing a transaction with a set of where clauses
 		struct WhereTransaction: public Transaction {
