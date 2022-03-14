@@ -18,12 +18,14 @@
 namespace sql::grammar {
 	namespace dsl = lexy::dsl;
 
-	// static constexpr auto ws = dsl::unicode::blank; // TODO: Does this bring newlines or do those need to be added manually?
-	static constexpr auto ws = dsl::ascii::blank;
+	// Whitespace is blank characters and newlines
+	static constexpr auto ws = dsl::ascii::blank / dsl::newline;
+	static constexpr auto comment = LEXY_LIT("--") >> dsl::until(dsl::newline);
+	static constexpr auto wsc = ws | comment;
 	// Rule which captures 0 or more whitespace characters
-	static constexpr auto wss = dsl::while_(ws);
+	static constexpr auto wss = dsl::while_(wsc);
 	// Rule which captures 1 or more whitespace characters
-	static constexpr auto wsp = dsl::while_one(ws);
+	static constexpr auto wsp = dsl::while_one(wsc);
 
 	// The wildcard token
 	static constexpr auto tWildcard = dsl::lit_c<'*'>;
@@ -344,7 +346,7 @@ namespace sql::grammar {
 
 		// Rule that matches the SELECT keyword
 		struct Select: lexy::token_production {
-			static constexpr auto rule = UL::s + UL::e + UL::l + UL::e + UL::c + UL::t + ws;
+			static constexpr auto rule = UL::s + UL::e + UL::l + UL::e + UL::c + UL::t + wsc;
 			static constexpr auto value = lexy::constant(ast::Transaction::Action::Query);
 		};
 		// The SELECT keyword
@@ -352,7 +354,7 @@ namespace sql::grammar {
 
 		// Rule that matches the DROP keyword
 		struct Drop: lexy::token_production {
-			static constexpr auto rule = UL::d + UL::r + UL::o + UL::p + ws;
+			static constexpr auto rule = UL::d + UL::r + UL::o + UL::p + wsc;
 			static constexpr auto value = lexy::constant(ast::Transaction::Action::Drop);
 		};
 		// The DROP keyword
@@ -360,7 +362,7 @@ namespace sql::grammar {
 
 		// Rule that matches the CREATE keyword
 		struct Create: lexy::token_production {
-			static constexpr auto rule = UL::c + UL::r + UL::e + UL::a + UL::t + UL::e + ws;
+			static constexpr auto rule = UL::c + UL::r + UL::e + UL::a + UL::t + UL::e + wsc;
 			static constexpr auto value = lexy::constant(ast::Transaction::Action::Create);
 		};
 		// The CREATE keyword
@@ -368,7 +370,7 @@ namespace sql::grammar {
 
 		// Rule that matches the USE keyword
 		struct Use: lexy::token_production {
-			static constexpr auto rule = UL::u + UL::s + UL::e + ws;
+			static constexpr auto rule = UL::u + UL::s + UL::e + wsc;
 			static constexpr auto value = lexy::constant(ast::Transaction::Action::Use);
 		};
 		// The USE keyword
@@ -376,7 +378,7 @@ namespace sql::grammar {
 
 		// Rule that matches the ALTER keyword
 		struct Alter: lexy::token_production {
-			static constexpr auto rule = UL::a + UL::l + UL::t + UL::e + UL::r + ws;
+			static constexpr auto rule = UL::a + UL::l + UL::t + UL::e + UL::r + wsc;
 			static constexpr auto value = lexy::constant(ast::Transaction::Action::Alter);
 		};
 		// The ALTER keyword
@@ -384,7 +386,7 @@ namespace sql::grammar {
 
 		// Rule that matches the ADD keyword
 		struct Add: lexy::token_production {
-			static constexpr auto rule = UL::a + UL::d + UL::d + ws;
+			static constexpr auto rule = UL::a + UL::d + UL::d + wsc;
 			static constexpr auto value = lexy::constant(ast::Transaction::Action::Add);
 		};
 		// The ADD keyword
@@ -392,7 +394,7 @@ namespace sql::grammar {
 
 		// Rule that matches the REMOVE keyword
 		struct Remove: lexy::token_production {
-			static constexpr auto rule = UL::r + UL::e + UL::m + UL::o + UL::v + UL::e + ws;
+			static constexpr auto rule = UL::r + UL::e + UL::m + UL::o + UL::v + UL::e + wsc;
 			static constexpr auto value = lexy::constant(ast::Transaction::Action::Remove);
 		};
 		// The REMOVE keyword
@@ -404,7 +406,7 @@ namespace sql::grammar {
 
 		// Rule that matches the DATABASE keyword
 		struct Database: lexy::token_production {
-			static constexpr auto rule = UL::d + UL::a + UL::t + UL::a + UL::b + UL::a + UL::s + UL::e + ws;
+			static constexpr auto rule = UL::d + UL::a + UL::t + UL::a + UL::b + UL::a + UL::s + UL::e + wsc;
 			static constexpr auto value = lexy::constant(ast::Transaction::Target::Database);
 		};
 		// The DATABASE keyword
@@ -412,7 +414,7 @@ namespace sql::grammar {
 
 		// Rule that matches the TABLE keyword
 		struct Table: lexy::token_production {
-			static constexpr auto rule = UL::t + UL::a + UL::b + UL::l + UL::e + ws;
+			static constexpr auto rule = UL::t + UL::a + UL::b + UL::l + UL::e + wsc;
 			static constexpr auto value = lexy::constant(ast::Transaction::Target::Table);
 		};
 		// The TABLE keyword
@@ -420,7 +422,7 @@ namespace sql::grammar {
 
 		// Rule that matches the COLUMN keyword
 		struct Column: lexy::token_production {
-			static constexpr auto rule = UL::c + UL::o + UL::l + UL::u + UL::m + UL::n + ws;
+			static constexpr auto rule = UL::c + UL::o + UL::l + UL::u + UL::m + UL::n + wsc;
 			static constexpr auto value = lexy::constant(ast::Transaction::Target::Column);
 		};
 		// The COLUMN keyword
@@ -432,7 +434,7 @@ namespace sql::grammar {
 
 		// Rule that matches the FROM keyword
 		struct From: lexy::token_production {
-			static constexpr auto rule = UL::f + UL::r + UL::o + UL::m + ws;
+			static constexpr auto rule = UL::f + UL::r + UL::o + UL::m + wsc;
 			static constexpr auto value = lexy::noop;
 		};
 		// The FROM keyword
@@ -440,7 +442,7 @@ namespace sql::grammar {
 
 		// Rule that matches the WHERE keyword
 		struct Where: lexy::token_production {
-			static constexpr auto rule = UL::w + UL::h + UL::e + UL::r + UL::e + ws;
+			static constexpr auto rule = UL::w + UL::h + UL::e + UL::r + UL::e + wsc;
 			static constexpr auto value = lexy::noop;
 		};
 		// The WHERE keyword
@@ -698,7 +700,7 @@ namespace sql::grammar {
 	// Rule that matches any type of transaction and forwards the resulting smart pointer
 	struct Transaction {
 		static constexpr auto whitespace = ws; // Automatic whitespace
-		static constexpr auto rule = dsl::peek(KW::create + KW::database) >> dsl::p<DatabaseTransaction>
+		static constexpr auto rule = wss + (dsl::peek(KW::create + KW::database) >> dsl::p<DatabaseTransaction>
 			| dsl::peek(KW::create + KW::table) >> dsl::p<CreateTableTransaction>
 			| dsl::peek(KW::drop + KW::database) >> dsl::p<DatabaseTransaction>
 			| dsl::peek(KW::drop + KW::table) >> dsl::p<DropTableTransaction>

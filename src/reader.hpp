@@ -50,7 +50,11 @@ public:
 	Reader(bool enableHistory = false) { if(enableHistory) setHistoryEntryLength(defaultHistoryLength); }
 
 	// Read a line from the console, appending it to the history if appropriate
-	std::string read(bool addToHistory = true){
+	std::string read(bool addToHistory = true, std::string_view promptOverride = ""){
+		// Reference the saved prompt if we aren't overriding it
+		if(promptOverride.empty())
+			promptOverride = prompt;
+
 		// Enable or disable masking
 		if(maskMode) linenoiseMaskModeEnable();
 		else linenoiseMaskModeDisable();
@@ -58,7 +62,7 @@ public:
 		linenoiseSetMultiLine(multilineMode ? 1 : 0);
 
 		// Read a line from the console and add it to the history
-		char* input = linenoise(prompt.c_str());
+		char* input = linenoise(promptOverride.data());
 		if(addToHistory) appendToHistory(input);
 
 		// Return a copy of the string and free the original buffer

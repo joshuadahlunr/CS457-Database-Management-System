@@ -74,13 +74,13 @@ int main() {
 	bool keepRunning = true;
 	while(keepRunning){
 		// Read some input from the user
-		std::string input = trim(r.read());
+		std::string input = trim(r.read(false));
+		while(input.find(";") == std::string::npos && tolower(input).find(".exit") == std::string::npos)
+			input += "\n" + trim(r.read(false, "^ "));
+		r.appendToHistory(input);
 
-		// Skipping comments and empty input
-		if(input.empty() || input == "\r" || input.starts_with("--")){
-			// Skip!
 		// Command to exit the program
-		} else if(tolower(input) == ".exit"){
+		if(tolower(input).find(".exit") != std::string::npos){
 			keepRunning = false;
 		} else {
 			sql::Transaction::ptr transaction = parseSQL(input);
@@ -350,7 +350,7 @@ void createTable(const sql::Transaction& _transaction, ProgramState& state){
 		columnNames.insert(c.name);
 	}
 	if(duplicates) return;
-	
+
 	// Set the table's column metadata
 	table.columns = transaction.columns;
 	// Add the table to the database's metadata
