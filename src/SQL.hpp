@@ -291,14 +291,6 @@ namespace sql {
 			// Smart pointer wrapper around a transaction
 			using ptr = std::unique_ptr<ast::Transaction>;
 
-			// Types of Transactions (with different signatures)
-			enum Type {
-				Base,
-				CreateTable,
-				AlterTable,
-				QueryTable,
-			};
-
 			// Actions a transaction can be performing
 			enum Action {
 				Invalid,
@@ -306,15 +298,18 @@ namespace sql {
 				Create,
 				Drop,
 				Alter,
+				Insert,
+				Update,
+				Delete,
 				Query,
 
-				// Actions specific to table alters // TODO: Should we consildate these into add and drop?
+				// Actions specific to table alters // TODO: Should we consildate these into create and drop?
 				Add,
 				Remove,
 
 				MAX
 			};
-			static const std::array<std::string, Action::MAX> ActionNames; //= {"Invalid", "Use", "Create", "Drop", "Alter", "Query", "Add", "Remove"};
+			static const std::array<std::string, Action::MAX> ActionNames; //= {"Invalid", "Use", "Create", "Drop", "Alter", "Insert", "Update", "Delete", "Query", "Add", "Remove"};
 
 			// Struct which represents the target of this command
 			struct Target {
@@ -334,8 +329,6 @@ namespace sql {
 				std::string name;
 			};
 
-			// The type of transaction (used to determine how to downcast)
-			Type type;
 			// The action to be taken by this command
 			Action action;
 			// The target of this command
@@ -354,6 +347,12 @@ namespace sql {
 			Action alterAction;
 			// The column of the table to be altered
 			Column alterTarget;  // Remove only uses the name, ignoring the datatype
+		};
+
+		// Struct representing a transaction that inserts a new tuple into the table
+		struct InsertIntoTableTransaction: public Transaction {
+			// The values to be inserted
+			std::vector<Data::Variant> values;
 		};
 
 		// Struct representing a transaction with a set of where clauses
@@ -382,8 +381,19 @@ namespace sql {
 			Wildcard<std::vector<std::string>> columns;
 		};
 
+		// Struct representing a transaction that updates some values in the table
+		struct UpdateTableTransaction: public WhereTransaction {
+			// Name of the column to be updated
+			std::string target;
+			// The value to update in that column
+			Data::Variant value;
+		};
+
+		// Struct representing a transaction that deletes some values from the table
+		struct DeleteFromTableTransaction: public WhereTransaction {};
+
 		// Memory backing for the enum name arrays
-		inline const std::array<std::string, Transaction::Action::MAX> Transaction::ActionNames = {"Invalid", "Use", "Create", "Drop", "Alter", "Insert", "Set", "Query", "Add", "Remove"};
+		inline const std::array<std::string, Transaction::Action::MAX> Transaction::ActionNames = {"Invalid", "Use", "Create", "Drop", "Alter", "Insert", "Update", "Delete", "Query", "Add", "Remove"};
 		inline const std::array<std::string, Transaction::Target::MAX> Transaction::Target::TypeNames = {"Invalid", "Database", "Table", "Column"};
 	} // ast
 

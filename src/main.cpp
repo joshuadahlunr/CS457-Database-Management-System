@@ -276,7 +276,7 @@ void createDatabase(const sql::Transaction& transaction, ProgramState& state){
 
 	// If we aren't currently using a database, start using the new database
 	if(!state.currentDatabase.has_value())
-		useDatabase({sql::Transaction::Base, sql::Transaction::Use, {sql::Transaction::Target::Database, database.name}}, state);
+		useDatabase({sql::Transaction::Use, {sql::Transaction::Target::Database, database.name}}, state);
 }
 
 // Function which deletes a database from the filesystem
@@ -294,14 +294,14 @@ void dropDatabase(const sql::Transaction& transaction, ProgramState& state){
 
 	// Make sure the metadata is valid (if not the database doesn't exist)
 	std::string usingCache = state.currentDatabase.value_or(sql::Database{}).name;
-	useDatabase({sql::Transaction::Base, sql::Transaction::Use, {sql::Transaction::Target::Database, database.name}}, state, /*quiet*/true);
+	useDatabase({sql::Transaction::Use, {sql::Transaction::Target::Database, database.name}}, state, /*quiet*/true);
 	if(state.currentDatabase.value_or(sql::Database{}).path != database.path){
 		std::cerr << "!Failed to delete database " << database.name << " because it doesn't exist." << std::endl;
 		return;
 	}
 	// Make sure we are still using the same database that we were before
 	if(!usingCache.empty())
-		useDatabase({sql::Transaction::Base, sql::Transaction::Use, {sql::Transaction::Target::Database, usingCache}}, state, /*quiet*/true);
+		useDatabase({sql::Transaction::Use, {sql::Transaction::Target::Database, usingCache}}, state, /*quiet*/true);
 	else state.currentDatabase = {};
 
 	// Remove the database
@@ -314,10 +314,9 @@ void dropDatabase(const sql::Transaction& transaction, ProgramState& state){
 }
 
 // Function which creates a table, both on disk and in the currently used database's metadata
-void createTable(const sql::CreateTableTransaction& transaction, ProgramState& state) { return createTable((const sql::Transaction&)transaction, state); }
 void createTable(const sql::Transaction& _transaction, ProgramState& state){
 	// Sanity checked downcast to the special type of transaction used by this function
-	if(_transaction.type != sql::Transaction::CreateTable)
+	if(_transaction.action != sql::Transaction::Create)
 		throw std::runtime_error("A parsing issue has occured! Somehow a non-CreateTableTransaction has arrived in createTable");
 	const sql::CreateTableTransaction& transaction = *reinterpret_cast<const sql::CreateTableTransaction*>(&_transaction);
 
@@ -397,10 +396,9 @@ void dropTable(const sql::Transaction& transaction, ProgramState& state){
 }
 
 // Function which modifies the metadata of a transaction
-void alterTable(const sql::AlterTableTransaction& transaction, ProgramState& state) { return createTable((const sql::Transaction&)transaction, state); }
 void alterTable(const sql::Transaction& _transaction, ProgramState& state){
 	// Sanity checked downcast to the special type of transaction used by this function
-	if(_transaction.type != sql::Transaction::AlterTable)
+	if(_transaction.action != sql::Transaction::Alter)
 		throw std::runtime_error("A parsing issue has occured! Somehow a non-AlterTableTransaction has arrived in alterTable");
 	const sql::AlterTableTransaction& transaction = *reinterpret_cast<const sql::AlterTableTransaction*>(&_transaction);
 
@@ -486,10 +484,9 @@ void alterTable(const sql::Transaction& _transaction, ProgramState& state){
 }
 
 // Function which performs a query on the data in a table
-void queryTable(const sql::QueryTableTransaction& transaction, ProgramState& state) { return createTable((const sql::Transaction&)transaction, state); }
 void queryTable(const sql::Transaction& _transaction, ProgramState& state){
 	// Sanity checked downcast to the special type of transaction used by this function
-	if(_transaction.type != sql::Transaction::QueryTable)
+	if(_transaction.action != sql::Transaction::Query)
 		throw std::runtime_error("A parsing issue has occured! Somehow a non-QueryTableTransaction has arrived in queryTable");
 	const sql::QueryTableTransaction& transaction = *reinterpret_cast<const sql::QueryTableTransaction*>(&_transaction);
 

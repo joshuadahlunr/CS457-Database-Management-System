@@ -33,7 +33,7 @@ namespace sql::grammar {
 	static constexpr auto stop = dsl::lit_c<';'>;
 
 	// Upper/Lower case letters
-	namespace UL {
+	namespace UpperLower {
 		static constexpr auto a = dsl::lit_c<'A'> / dsl::lit_c<'a'>;
 		static constexpr auto b = dsl::lit_c<'B'> / dsl::lit_c<'b'>;
 		static constexpr auto c = dsl::lit_c<'C'> / dsl::lit_c<'c'>;
@@ -61,6 +61,7 @@ namespace sql::grammar {
 		static constexpr auto y = dsl::lit_c<'Y'> / dsl::lit_c<'y'>;
 		static constexpr auto z = dsl::lit_c<'Z'> / dsl::lit_c<'z'>;
 	}
+	namespace UL = UpperLower;
 
 
 	// Rule that matches an identifier (as defined in Microsoft's SQL definition)
@@ -341,7 +342,7 @@ namespace sql::grammar {
 	// database, table, column
 	// from
 
-	namespace KW {
+	namespace Keyword {
 		// --- Action Keywords ---
 
 		// Rule that matches the SELECT keyword
@@ -358,7 +359,15 @@ namespace sql::grammar {
 			static constexpr auto value = lexy::constant(ast::Transaction::Action::Drop);
 		};
 		// The DROP keyword
-		static constexpr auto drop = dsl::peek(UL::d) >> dsl::p<Drop>;
+		static constexpr auto drop = dsl::peek(UL::d + UL::r) >> dsl::p<Drop>;
+
+		// Rule that matches the DELETE keyword
+		struct Delete_: lexy::token_production {
+			static constexpr auto rule = UL::d + UL::e + UL::l + UL::e + UL::t + UL::e + ws;
+			static constexpr auto value = lexy::constant(ast::Transaction::Action::Delete);
+		};
+		// The DELETE keyword
+		static constexpr auto Delete = dsl::peek(UL::d + UL::e) >> dsl::p<Delete_>;
 
 		// Rule that matches the CREATE keyword
 		struct Create: lexy::token_production {
@@ -374,7 +383,23 @@ namespace sql::grammar {
 			static constexpr auto value = lexy::constant(ast::Transaction::Action::Use);
 		};
 		// The USE keyword
-		static constexpr auto use = dsl::peek(UL::u) >> dsl::p<Use>;
+		static constexpr auto use = dsl::peek(UL::u + UL::s) >> dsl::p<Use>;
+
+		// Rule that matches the UPDATE keyword
+		struct Update: lexy::token_production {
+			static constexpr auto rule = UL::u + UL::p + UL::d + UL::a + UL::t + UL::e + ws;
+			static constexpr auto value = lexy::constant(ast::Transaction::Action::Update);
+		};
+		// The UPDATE keyword
+		static constexpr auto update = dsl::peek(UL::u + UL::p) >> dsl::p<Update>;
+
+		// Rule that matches the INSERT keyword
+		struct Insert: lexy::token_production {
+			static constexpr auto rule = UL::i + UL::n + UL::s + UL::e + UL::r + UL::t + ws;
+			static constexpr auto value = lexy::constant(ast::Transaction::Action::Insert);
+		};
+		// The INSERT keyword
+		static constexpr auto insert = dsl::peek(UL::i) >> dsl::p<Insert>;
 
 		// Rule that matches the ALTER keyword
 		struct Alter: lexy::token_production {
@@ -448,9 +473,40 @@ namespace sql::grammar {
 		// The WHERE keyword
 		static constexpr auto where = dsl::peek(UL::w) >> dsl::p<Where>;
 
+		// Rule that matches the AND keyword
+		struct And_: lexy::token_production {
+			static constexpr auto rule = ((UL::a >> UL::n + UL::d) | dsl::lit_c<'&'>) + wsc;
+			static constexpr auto value = lexy::noop;
+		};
 		// The AND keyword
-		static constexpr auto And = (UL::a >> UL::n + UL::d) | dsl::lit_c<'&'>;
-	} // KW
+		static constexpr auto And = dsl::peek(UL::a) >> dsl::p<And_>;
+
+		// Rule that matches the INTO keyword
+		struct Into: lexy::token_production {
+			static constexpr auto rule = UL::i + UL::n + UL::t + UL::o + wsc;
+			static constexpr auto value = lexy::noop;
+		};
+		// The INTO keyword
+		static constexpr auto into = dsl::peek(UL::i) >> dsl::p<Into>;
+
+		// Rule that matches the VALUES keyword
+		struct Values: lexy::token_production {
+			static constexpr auto rule = UL::v + UL::a + UL::l + UL::u + UL::e + dsl::opt(UL::s);
+			static constexpr auto value = lexy::noop;
+		};
+		// The INTO keyword
+		static constexpr auto values = dsl::peek(UL::v) >> dsl::p<Values>;
+
+		// Rule that matches the SET keyword
+		struct Set: lexy::token_production {
+			static constexpr auto rule = UL::s + UL::e + UL::t + wsc;
+			static constexpr auto value = lexy::noop;
+		};
+		// The SET keyword
+		static constexpr auto set = dsl::peek(UL::s) >> dsl::p<Set>;
+	} // Keyword
+	namespace KW = Keyword;
+
 
 	// Types
 	// bool, int, float, char, varchar, text
@@ -602,7 +658,7 @@ namespace sql::grammar {
 		static constexpr auto rule = (KW::create | KW::drop) + KW::database + identifier + stop;
 		// Convert the parsed result into a Transcation smart pointer (unified type for all transactions)
 		static constexpr auto value = lexy::construct<Intermediate> | lexy::callback<ast::Transaction::ptr>([](Intermediate&& i) {
-			return std::make_unique<ast::Transaction>(ast::Transaction::Base, i.action, ast::Transaction::Target{i.type, i.ident});
+			return std::make_unique<ast::Transaction>(i.action, ast::Transaction::Target{i.type, i.ident});
 		});
 	};
 
@@ -618,7 +674,7 @@ namespace sql::grammar {
 		static constexpr auto rule = KW::use + identifier + stop;
 		// Convert the parsed result into a Transcation smart pointer (unified type for all transactions)
 		static constexpr auto value = lexy::construct<UseDatabaseTransaction::Intermediate> | lexy::callback<ast::Transaction::ptr>([](UseDatabaseTransaction::Intermediate&& i) {
-			return std::make_unique<ast::Transaction>(ast::Transaction::Base, i.action, ast::Transaction::Target{ast::Transaction::Target::Database, i.ident});
+			return std::make_unique<ast::Transaction>(i.action, ast::Transaction::Target{ast::Transaction::Target::Database, i.ident});
 		});
 	};
 
@@ -635,7 +691,7 @@ namespace sql::grammar {
 		static constexpr auto rule = KW::drop + KW::table + identifier + stop;
 		// Convert the parsed result into a Transcation smart pointer (unified type for all transactions)
 		static constexpr auto value = lexy::construct<Intermediate> | lexy::callback<ast::Transaction::ptr>([](Intermediate&& i) {
-			return std::make_unique<ast::Transaction>(ast::Transaction::Base, i.action, ast::Transaction::Target{i.type, i.ident});
+			return std::make_unique<ast::Transaction>(i.action, ast::Transaction::Target{i.type, i.ident});
 		});
 	};
 
@@ -653,7 +709,7 @@ namespace sql::grammar {
 		static constexpr auto rule = KW::create + KW::table + identifier + dsl::opt(dsl::lit_c<'('> >> columnDeclarationList + dsl::lit_c<')'>) + stop;
 		// Convert the parsed result into a Transcation smart pointer (unified type for all transactions)
 		static constexpr auto value = lexy::construct<Intermediate> | lexy::callback<ast::Transaction::ptr>([](Intermediate&& i) {
-			return std::make_unique<ast::CreateTableTransaction>(ast::CreateTableTransaction{ast::Transaction::CreateTable, i.action, ast::Transaction::Target{i.type, i.ident}, i.columns.value_or(std::vector<Column>{})});
+			return std::make_unique<ast::CreateTableTransaction>(ast::CreateTableTransaction{i.action, ast::Transaction::Target{i.type, i.ident}, i.columns.value_or(std::vector<Column>{})});
 		});
 	};
 
@@ -674,7 +730,28 @@ namespace sql::grammar {
 			using wc = sql::Wildcard<std::vector<std::string>>;
 			wc columns = i.columns.has_value() ? (wc)i.columns.value() : (wc)std::nullopt;
 			auto conditions = i.conditions.has_value() ? *i.conditions : std::vector<WhereTransaction::Condition>{};
-			return std::make_unique<ast::QueryTableTransaction>(ast::QueryTableTransaction{ast::Transaction::QueryTable, i.action, ast::Transaction::Target{ast::Transaction::Target::Table, i.ident}, conditions, columns});
+			return std::make_unique<ast::QueryTableTransaction>(ast::QueryTableTransaction{i.action, ast::Transaction::Target{ast::Transaction::Target::Table, i.ident}, conditions, columns});
+		});
+	};
+
+	// Rule that matches a table insert
+	struct InsertIntoTableTransaction {
+		// Struct that parses a comma seperated list of literals
+		struct ValueList {
+			static constexpr auto rule = dsl::list(literalVariant, dsl::sep(dsl::comma));
+			static constexpr auto value = lexy::as_list<std::vector<Data::Variant>>;
+		};
+		// Data acquired from the parse which needs to be rearranged to fit our data structures
+		struct Intermediate {
+			ast::Transaction::Action action;
+			std::string ident;
+			std::vector<Data::Variant> values;
+		};
+
+		// insert into <id> values (<valueList>) ;
+		static constexpr auto rule = KW::insert + KW::into + identifier + KW::values + dsl::lit_c<'('> + dsl::p<ValueList> + dsl::lit_c<')'> + stop;
+		static constexpr auto value = lexy::construct<Intermediate> | lexy::callback<ast::Transaction::ptr>([](Intermediate&& i) {
+			return std::make_unique<ast::InsertIntoTableTransaction>(ast::InsertIntoTableTransaction{i.action, ast::Transaction::Target{ast::Transaction::Target::Table, i.ident}, i.values});
 		});
 	};
 
@@ -693,7 +770,44 @@ namespace sql::grammar {
 		static constexpr auto rule = KW::alter + KW::table + identifier + (((KW::add | KW::alter) >> columnDeclaration) | (KW::remove >> identifier)) + stop;
 		// Convert the parsed result into a Transcation smart pointer (unified type for all transactions)
 		static constexpr auto value = lexy::construct<Intermediate> | lexy::callback<ast::Transaction::ptr>([](Intermediate&& i) {
-			return std::make_unique<ast::AlterTableTransaction>(ast::AlterTableTransaction{ast::Transaction::AlterTable, i.action, ast::Transaction::Target{i.type, i.ident}, i.alterAction, i.alterTarget});
+			return std::make_unique<ast::AlterTableTransaction>(ast::AlterTableTransaction{i.action, ast::Transaction::Target{i.type, i.ident}, i.alterAction, i.alterTarget});
+		});
+	};
+
+	// Rule that matches a table value update
+	struct UpdateTableTransaction {
+		// Data acquired from the parse which needs to be rearranged to fit our data structures
+		struct Intermediate {
+			ast::Transaction::Action action;
+			std::string table, column;
+			Data::Variant value;
+			std::optional<std::vector<WhereTransaction::Condition>> conditions;
+		};
+
+		// update <id> set <id> = <literal> where <conditions>;
+		static constexpr auto rule = KW::update + identifier + KW::set + identifier + dsl::lit_c<'='> + literalVariant + whereConditions + stop;
+		// Convert the parsed result into a Transcation smart pointer (unified type for all transactions)
+		static constexpr auto value = lexy::construct<Intermediate> | lexy::callback<ast::Transaction::ptr>([](Intermediate&& i) -> ast::Transaction::ptr {
+			auto conditions = i.conditions.has_value() ? *i.conditions : std::vector<WhereTransaction::Condition>{};
+			return std::make_unique<ast::UpdateTableTransaction>(ast::UpdateTableTransaction{i.action, ast::Transaction::Target{ast::Transaction::Target::Table, i.table}, conditions, i.column, i.value});
+		});
+	};
+
+	// Rule that matches a table value deletion
+	struct DeleteFromTableTransaction {
+		// Data acquired from the parse which needs to be rearranged to fit our data structures
+		struct Intermediate {
+			ast::Transaction::Action action;
+			std::string table;
+			std::optional<std::vector<WhereTransaction::Condition>> conditions;
+		};
+
+		// delete from <id> where <conditions>;
+		static constexpr auto rule = KW::Delete + KW::from + identifier + whereConditions + stop;
+		// Convert the parsed result into a Transcation smart pointer (unified type for all transactions)
+		static constexpr auto value = lexy::construct<Intermediate> | lexy::callback<ast::Transaction::ptr>([](Intermediate&& i) -> ast::Transaction::ptr {
+			auto conditions = i.conditions.has_value() ? *i.conditions : std::vector<WhereTransaction::Condition>{};
+			return std::make_unique<ast::DeleteFromTableTransaction>(ast::DeleteFromTableTransaction{i.action, ast::Transaction::Target{ast::Transaction::Target::Table, i.table}, conditions});
 		});
 	};
 
@@ -706,7 +820,10 @@ namespace sql::grammar {
 			| dsl::peek(KW::drop + KW::table) >> dsl::p<DropTableTransaction>
 			| dsl::peek(KW::use) >> dsl::p<UseDatabaseTransaction>
 			| dsl::peek(KW::select) >> dsl::p<QueryTableTransaction>
-			| dsl::peek(KW::alter) >> dsl::p<AlterTableTransaction>;
+			| dsl::peek(KW::alter) >> dsl::p<AlterTableTransaction>
+			| dsl::peek(KW::insert) >> dsl::p<InsertIntoTableTransaction>
+			| dsl::peek(KW::update) >> dsl::p<UpdateTableTransaction>
+			| dsl::peek(KW::Delete) >> dsl::p<DeleteFromTableTransaction>);
 		static constexpr auto value = lexy::forward<ast::Transaction::ptr>;
 	};
 
