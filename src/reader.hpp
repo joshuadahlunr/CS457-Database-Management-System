@@ -3,7 +3,7 @@
  * Author: Joshua Dahl
  * Email: joshuadahl@nevada.unr.edu
  * Created: 2/7/22
- * Modified: 2/7/22
+ * Modified: 3/14/22
  * Description: C++ wrapper around linenoise (a console reader and history provider)
  *------------------------------------------------------------*/
 

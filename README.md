@@ -16,7 +16,7 @@ make
 Once the project has been built it can be ran using:
 
 ```bash
-./pa1 # In the newly created build directory
+./pa2 # In the newly created build directory
 ```
 
-There are currently no command line options, simply start entering SQL in the provided prompt, but the “.exit” command can be used to close the application.
+There are currently no command line options, simply start entering SQL in the provided prompt. The “.exit” command can be used to close the application.

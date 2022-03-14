@@ -3,15 +3,32 @@
  * Author: Joshua Dahl
  * Email: joshuadahl@nevada.unr.edu
  * Created: 2/7/22
- * Modified: 2/7/22
+ * Modified: 3/14/22
  * Description: Main driver of the program, responsible for collecting user input, executing the parse, and then executing the proper operations.
  *------------------------------------------------------------*/
 
+#include <ctype.h>
+#include <ext/alloc_traits.h>
+#include <stddef.h>
 #include <iostream>
 #include <set>
-#include <numeric>
+#include <algorithm>
+#include <array>
+#include <filesystem>
+#include <memory>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <type_traits>
+#include <utility>
+#include <variant>
+#include <vector>
+
 #include "reader.hpp"
 #include "SQLparser.hpp"
+#include "SQL.hpp"
+#include "SimpleBinStream.h"
 
 // Constant representing the filename of database metadata files
 constexpr const char* metadataFileName = ".metadata";

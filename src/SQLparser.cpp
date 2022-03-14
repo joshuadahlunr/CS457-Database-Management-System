@@ -3,7 +3,7 @@
  * Author: Joshua Dahl
  * Email: joshuadahl@nevada.unr.edu
  * Created: 2/7/22
- * Modified: 2/7/22
+ * Modified: 3/14/22
  * Description: File which implements the grammar for parsing SQL (implemented as a Lexy DSL)
  *------------------------------------------------------------*/
 
@@ -658,7 +658,7 @@ namespace sql::grammar {
 		static constexpr auto rule = (KW::create | KW::drop) + KW::database + identifier + stop;
 		// Convert the parsed result into a Transcation smart pointer (unified type for all transactions)
 		static constexpr auto value = lexy::construct<Intermediate> | lexy::callback<ast::Transaction::ptr>([](Intermediate&& i) {
-			return std::make_unique<ast::Transaction>(i.action, ast::Transaction::Target{i.type, i.ident});
+			return std::make_unique<ast::Transaction>(ast::Transaction{i.action, ast::Transaction::Target{i.type, i.ident}});
 		});
 	};
 
@@ -674,7 +674,7 @@ namespace sql::grammar {
 		static constexpr auto rule = KW::use + identifier + stop;
 		// Convert the parsed result into a Transcation smart pointer (unified type for all transactions)
 		static constexpr auto value = lexy::construct<UseDatabaseTransaction::Intermediate> | lexy::callback<ast::Transaction::ptr>([](UseDatabaseTransaction::Intermediate&& i) {
-			return std::make_unique<ast::Transaction>(i.action, ast::Transaction::Target{ast::Transaction::Target::Database, i.ident});
+			return std::make_unique<ast::Transaction>(ast::Transaction{i.action, ast::Transaction::Target{ast::Transaction::Target::Database, i.ident}});
 		});
 	};
 
@@ -691,7 +691,7 @@ namespace sql::grammar {
 		static constexpr auto rule = KW::drop + KW::table + identifier + stop;
 		// Convert the parsed result into a Transcation smart pointer (unified type for all transactions)
 		static constexpr auto value = lexy::construct<Intermediate> | lexy::callback<ast::Transaction::ptr>([](Intermediate&& i) {
-			return std::make_unique<ast::Transaction>(i.action, ast::Transaction::Target{i.type, i.ident});
+			return std::make_unique<ast::Transaction>(ast::Transaction{i.action, ast::Transaction::Target{i.type, i.ident}});
 		});
 	};
 

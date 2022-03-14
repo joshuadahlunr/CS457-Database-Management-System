@@ -3,7 +3,7 @@
 # Author: Joshua Dahl
 # Email: joshuadahl@nevada.unr.edu
 # Created: 2/7/22
-# Modified: 2/7/22
+# Modified: 3/14/22
 # Description: CMAKE build script responsible for building the project and libraries
 #------------------------------------------------------------
 
@@ -20,6 +20,6 @@ file(GLOB sources "src/*.cpp" "src/*.c" "thirdparty/linenoise/linenoise.c")
 set(includes "src/" "thirdparty/linenoise/" "thirdparty/simplebinstream/TestBinStream" ${ext_include_dir} ${Boost_INCLUDE_DIRS})
 set(libraries lexy ${Boost_LIBRARIES})
 
-add_executable (pa1 ${sources})
-target_include_directories (pa1 PUBLIC ${includes})
-target_link_libraries (pa1 LINK_PUBLIC ${libraries})
+add_executable (pa2 ${sources})
+target_include_directories (pa2 PUBLIC ${includes})
+target_link_libraries (pa2 LINK_PUBLIC ${libraries})
