@@ -210,7 +210,7 @@ namespace sql::grammar {
 				// Convert the integer portion of the number
 				if(in.integer.has_value())
 					fractionValue = toDecimal(*in.integer, in.base);
-				else if(in.base = 8) { // If we have no integer portion and the base is 8, that means there is a sinle floating 0
+				else if(in.base == 8) { // If we have no integer portion and the base is 8, that means there is a sinle floating 0
 					in.base = 10;
 					fractionValue = 0;
 				} else

@@ -9,7 +9,7 @@ To actually build navigate to the root directory of the project (the one contain
 ```bash
 mkdir build
 cd build
-cmake ..
+cmake .. # If this step fails try again with CXX=g++ cmake ..
 make
 ```
 
