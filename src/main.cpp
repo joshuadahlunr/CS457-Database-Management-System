@@ -3,7 +3,7 @@
  * Author: Joshua Dahl
  * Email: joshuadahl@nevada.unr.edu
  * Created: 2/7/22
- * Modified: 3/14/22
+ * Modified: 3/25/22
  * Description: Main driver of the program, responsible for collecting user input, executing the parse, and then executing the proper operations.
  *------------------------------------------------------------*/
 
@@ -62,6 +62,28 @@ void queryTable(const sql::Transaction& transaction, ProgramState& state);
 void updateTable(const sql::Transaction& transaction, ProgramState& state);
 void deleteFromTable(const sql::Transaction& transaction, ProgramState& state);
 
+// Function which splits a string into a vector of substrings at the specified seperators
+static std::vector<std::string> split(std::string s, const char* seperators = " \t\v\f\r\n", size_t pos = 0, size_t max_splits = -1) {
+	size_t start = pos, splits = 0;
+	pos = s.find_first_of(seperators, pos);
+	std::vector<std::string> out;
+
+	// While there are still strings to split
+	while (pos != std::string::npos && splits < max_splits) {
+		if(pos - start > 0) {
+			out.emplace_back(s.substr(start, pos - start));
+			splits++;
+		}
+
+		start = pos + 1;
+		pos = s.find_first_of(seperators, start);
+	}
+
+	out.emplace_back(s.substr(start, std::string::npos));
+
+	return out;
+}
+
 // Function which makes a string lowercase
 std::string tolower(std::string s){
 	for(char& c: s)
@@ -70,16 +92,16 @@ std::string tolower(std::string s){
 }
 
 // Function which removes all of the deliminating characters from the left side of a string
-static std::string ltrim (const std::string s, const char* delims = " \t\v\f\r\n") {
+inline std::string ltrim (const std::string s, const char* delims = " \t\v\f\r\n") {
 	if(size_t pos = s.find_first_not_of(delims); pos != std::string::npos)
 		return s.substr(pos);
-	return ""; // Return a null string if we couldn't find any of the given things
+	return ""; // Return a null string if we couldn't find any non-delimiter characters
 }
 // Function which removes all of the deliminating characters from the right side of a string
-static std::string rtrim (const std::string& s, const char* delims = " \t\v\f\r\n") {
+inline std::string rtrim (const std::string& s, const char* delims = " \t\v\f\r\n") {
 	if(size_t pos = s.find_last_not_of(delims); pos != std::string::npos)
 		return s.substr(0, pos + 1);
-	return ""; // Return a null string if we couldn't find any of the given things
+	return ""; // Return a null string if we couldn't find any non-delimiter characters
 }
 // Function which removes all of the deliminating characters from the both sides of a string
 inline std::string trim (const std::string& s, const char* delims = " \t\v\f\r\n") {
@@ -99,41 +121,51 @@ int main() {
 	while(keepRunning){
 		// Read some input from the user
 		std::string input = trim(r.read(false));
-		while(input.find(";") == std::string::npos && tolower(input).find(".exit") == std::string::npos)
+		while(rtrim(input).back() != ';' && tolower(input).find(".exit") == std::string::npos)
 			input += "\n" + trim(r.read(false, "^ "));
 		r.appendToHistory(input);
 
-		// Command to exit the program
-		if(tolower(input).find(".exit") != std::string::npos){
-			keepRunning = false;
-		} else {
-			sql::Transaction::ptr transaction = parseSQL(input);
-			// If we failed to parse the provided statement... continue
-			if(transaction == nullptr)
-				continue; // Error message provided by parse
+		// Split the input based on semicolons, so each SQL command is parsed seperately
+		std::vector<std::string> inputs = split(input, ";");
+		for(std::string& input: inputs) {
+			// If there is nothing to do, skip this input
+			input = trim(input);
+			if(input.empty()) continue;
+			// Append the semicolon that was removed when we split
+			input += ';';
 
-			// Hand off the function to the proper dispatcher based on the action this transaction wishes to perform
-			// NOTE: We dereference the pointer we recieved from the parser, its lifetime extends beyond the function utilization and we can still use polymorphism on references
-			switch(transaction->action){
-			break; case sql::Transaction::Use:
-				use(*transaction, state);
-			break; case sql::Transaction::Create:
-				create(*transaction, state);
-			break; case sql::Transaction::Drop:
-				drop(*transaction, state);
-			break; case sql::Transaction::Alter:
-				alter(*transaction, state);
-			break; case sql::Transaction::Insert:
-				insert(*transaction, state);
-			break; case sql::Transaction::Query:
-				query(*transaction, state);
-			break; case sql::Transaction::Update:
-				update(*transaction, state);
-			break; case sql::Transaction::Delete:
-				delete_(*transaction, state);
-			// If the action is unsupported, error
-			break; default:
-				throw std::runtime_error("!Unsupported action: " + sql::Transaction::ActionNames[transaction->action]);
+			// Command to exit the program
+			if(tolower(input).find(".exit") != std::string::npos){
+				keepRunning = false;
+			} else {
+				sql::Transaction::ptr transaction = parseSQL(input);
+				// If we failed to parse the provided statement... continue
+				if(transaction == nullptr)
+					continue; // Error message provided by parse
+
+				// Hand off the function to the proper dispatcher based on the action this transaction wishes to perform
+				// NOTE: We dereference the pointer we recieved from the parser, its lifetime extends beyond the function utilization and we can still use polymorphism on references
+				switch(transaction->action){
+				break; case sql::Transaction::Use:
+					use(*transaction, state);
+				break; case sql::Transaction::Create:
+					create(*transaction, state);
+				break; case sql::Transaction::Drop:
+					drop(*transaction, state);
+				break; case sql::Transaction::Alter:
+					alter(*transaction, state);
+				break; case sql::Transaction::Insert:
+					insert(*transaction, state);
+				break; case sql::Transaction::Query:
+					query(*transaction, state);
+				break; case sql::Transaction::Update:
+					update(*transaction, state);
+				break; case sql::Transaction::Delete:
+					delete_(*transaction, state);
+				// If the action is unsupported, error
+				break; default:
+					throw std::runtime_error("!Unsupported action: " + sql::Transaction::ActionNames[transaction->action]);
+				}
 			}
 		}
 	}
