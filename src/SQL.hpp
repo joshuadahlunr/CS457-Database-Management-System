@@ -533,6 +533,13 @@ namespace sql {
 
 		// Struct representing a table query transaction
 		struct QueryTableTransaction: public WhereTransaction {
+			struct TableAlias {
+				std::string table;
+				std::string alias;
+			};
+			// A list of tables that should be joined to construct this query
+			std::vector<TableAlias> tableAliases;
+
 			// The columns (or wildcard) to query
 			Wildcard<std::vector<std::string>> columns;
 		};

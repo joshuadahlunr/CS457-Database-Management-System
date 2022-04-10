@@ -62,10 +62,10 @@ void queryTable(const sql::Transaction& transaction, ProgramState& state);
 void updateTable(const sql::Transaction& transaction, ProgramState& state);
 void deleteFromTable(const sql::Transaction& transaction, ProgramState& state);
 
-// Function which splits a string into a vector of substrings at the specified seperators
-static std::vector<std::string> split(std::string s, const char* seperators = " \t\v\f\r\n", size_t pos = 0, size_t max_splits = -1) {
+// Function which splits a string into a vector of substrings at the specified separators
+static std::vector<std::string> split(std::string s, const char* separators = " \t\v\f\r\n", size_t pos = 0, size_t max_splits = -1) {
 	size_t start = pos, splits = 0;
-	pos = s.find_first_of(seperators, pos);
+	pos = s.find_first_of(separators, pos);
 	std::vector<std::string> out;
 
 	// While there are still strings to split
@@ -76,7 +76,7 @@ static std::vector<std::string> split(std::string s, const char* seperators = " 
 		}
 
 		start = pos + 1;
-		pos = s.find_first_of(seperators, start);
+		pos = s.find_first_of(separators, start);
 	}
 
 	out.emplace_back(s.substr(start, std::string::npos));
@@ -467,6 +467,12 @@ void createDatabase(const sql::Transaction& transaction, ProgramState& state){
 		return;
 	}
 
+	// Disallow periods
+	if(database.name.find(".") != std::string::npos){
+		std::cerr << "!Failed to create database " << database.name << " because database names are not allowed to contain a period." << std::endl;
+		return;
+	}
+
 	// Create directorty for the database and save metadata file
 	std::filesystem::create_directory(database.path);
 	saveDatabaseMetadataFile(database);
@@ -533,6 +539,12 @@ void createTable(const sql::Transaction& _transaction, ProgramState& state){
 	// Ensure that the table doesn't already exist
 	if(exists(table.path)){
 		std::cerr << "!Failed to create table " << table.name << " because it already exists." << std::endl;
+		return;
+	}
+
+	// Disallow periods
+	if(table.name.find(".") != std::string::npos){
+		std::cerr << "!Failed to create table " << table.name << " because table names are not allowed to contain a period." << std::endl;
 		return;
 	}
 
@@ -631,6 +643,12 @@ void alterTable(const sql::Transaction& _transaction, ProgramState& state){
 		// Make sure sure that the column isn't in the metadata, error if present
 		if(index != -1){
 			std::cerr << "!Failed to add " << transaction.alterTarget.name << " because it already exists in " << table.name << "." << std::endl;
+			return;
+		}
+
+		// Disallow periods
+		if(transaction.alterTarget.name.find(".") != std::string::npos){
+			std::cerr << "!Failed to add " << transaction.alterTarget.name << " because column names are not allowed to contain a period." << std::endl;
 			return;
 		}
 
@@ -757,9 +775,56 @@ void queryTable(const sql::Transaction& _transaction, ProgramState& state){
 	table.name = transaction.target.name;
 	table.path = database.path / (table.name + ".table");
 
+	// Ensure that none of the Table share the same alias
+	auto uniqueEnd = std::unique(transaction.tableAliases.begin(), transaction.tableAliases.end(), [](const auto& a, const auto& b){
+		return a.alias == b.alias;
+	});
+	if(uniqueEnd != transaction.tableAliases.end()){
+		std::cerr << "!Failed to query table " << transaction.target.name << " becuase it contains multiple tables mapped to the same alias." << std::endl;
+		return;
+	}
+
 	// Load the table from disk (helper handles ensuring that it exists)
 	if(!loadTable(table, database, "query"))
 		return;
+	// Add the alias to the table columns' names
+	for(auto& column: table.columns)
+		column.name = transaction.tableAliases[0].alias + "." + column.name;
+
+
+	// If we have to preform a table join...
+	for(size_t i = 1; i < transaction.tableAliases.size(); i++) {
+		// Load the table from disk (helper handles ensuring that it exists)
+		sql::Table tempTable;
+		tempTable.name = transaction.tableAliases[i].table;
+		tempTable.path = database.path / (table.name + ".table");
+		if(!loadTable(tempTable, database, "query"))
+			return;
+		// Add the alias to the table columns' names
+		for(auto& column: tempTable.columns)
+			column.name = transaction.tableAliases[i].alias + "." + column.name;
+
+
+		// Create a new table with all of the columns of both the old and newly loaded tables
+		sql::Table cartesianProduct;
+		for(auto& column: table.columns)
+			cartesianProduct.columns.push_back(column);
+		for(auto& column: tempTable.columns)
+			cartesianProduct.columns.push_back(column);
+		// Preform a cartesian product of the tuples in both tables
+		for(auto& oldTuple: table.tuples)
+			for(auto& newTuple: tempTable.tuples) {
+				auto& tuple = cartesianProduct.createEmptyTuple();
+				for(size_t i = 0; i < oldTuple.size(); i++)
+					tuple[i] = oldTuple[i];
+				for(size_t i = 0, offset = oldTuple.size(); i < newTuple.size(); i++)
+					tuple[i + offset] = newTuple[i];
+			}
+
+		// Update the table to be the calculated cartesian product
+		table = std::move(cartesianProduct);
+	}
+
 
 	// Select tuples
 	if(!transaction.conditions.empty()){

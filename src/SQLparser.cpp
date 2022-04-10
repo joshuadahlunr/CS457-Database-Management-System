@@ -725,22 +725,36 @@ namespace sql::grammar {
 
 	// Rule that matches a table query
 	struct QueryTableTransaction {
+		struct TableAlias {
+			//id id?
+			static constexpr auto rule = identifier + dsl::opt(identifier);
+			static constexpr auto value = lexy::callback<sql::ast::QueryTableTransaction::TableAlias>([](auto&& table, std::optional<std::string>&& alias){
+				return sql::ast::QueryTableTransaction::TableAlias{table, (alias.has_value() ? *alias : table)};
+			});
+
+			// A comma separated list of aliases
+			struct List {
+				static constexpr auto rule = dsl::list(dsl::p<TableAlias>, dsl::sep(dsl::comma));
+				static constexpr auto value = lexy::as_list<std::vector<sql::ast::QueryTableTransaction::TableAlias>>;
+			};
+		};
+
 		// Data acquired from the parse which needs to be rearranged to fit our data structures
 		struct Intermediate {
 			ast::Transaction::Action action;
 			std::optional<std::vector<std::string>> columns;
-			std::string ident;
+			std::vector<sql::ast::QueryTableTransaction::TableAlias> tableAliases;
 			std::optional<std::vector<WhereTransaction::Condition>> conditions;
 		};
 
-		// select */<id>,... from <id> (where <conditions>);
-		static constexpr auto rule = KW::select + (wildcard | identifierList) + KW::from + identifier + dsl::opt(whereConditions) + stop;
+		// select */<id>,... from <aliasList> (where <conditions>)?;
+		static constexpr auto rule = KW::select + (wildcard | identifierList) + KW::from + dsl::p<TableAlias::List> + dsl::opt(whereConditions) + stop;
 		// Convert the parsed result into a Transcation smart pointer (unified type for all transactions)
 		static constexpr auto value = lexy::construct<Intermediate> | lexy::callback<ast::Transaction::ptr>([](Intermediate&& i) -> ast::Transaction::ptr {
 			using wc = sql::Wildcard<std::vector<std::string>>;
 			wc columns = i.columns.has_value() ? (wc)i.columns.value() : (wc)std::nullopt;
 			auto conditions = i.conditions.has_value() ? *i.conditions : std::vector<WhereTransaction::Condition>{};
-			return std::make_unique<ast::QueryTableTransaction>(ast::QueryTableTransaction{i.action, ast::Transaction::Target{ast::Transaction::Target::Table, i.ident}, conditions, columns});
+			return std::make_unique<ast::QueryTableTransaction>(ast::QueryTableTransaction{i.action, ast::Transaction::Target{ast::Transaction::Target::Table, i.tableAliases.front().table}, conditions, i.tableAliases, columns});
 		});
 	};
 
