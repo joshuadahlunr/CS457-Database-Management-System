@@ -312,17 +312,22 @@ bool loadTable(sql::Table& table, const sql::Database& database, std::string ope
 	return false;
 }
 
+// Function that finds the index of a column in a table given its name
+size_t findColumn(sql::Table& table, const std::string& columnName){
+	for(size_t i = 0; i < table.columns.size(); i++)
+		// Check that the columns name matches exactly, or the column name (with table/after) matches
+		if(table.columns[i].name == columnName || split(table.columns[i].name, ".").back() == columnName)
+			return i;
+	return -1;
+}
+
 // Helper function that returns a set of indecies representing tuples that satisfy the where conditions in the provided transaction
 std::vector<size_t> applyWhereConditions(sql::Table& table, sql::WhereTransaction& transaction, std::string_view operation) {
-	// For each condition, find its associated column and validate its data
+	// For each condition, find its associated column (and possibly the column its data is held in) and validate its data
 	std::vector<size_t> conditionColumns;
+	std::vector<size_t> conditionDataColumns;
 	for(auto& condition: transaction.conditions){
-		size_t index = -1;
-		for(size_t i = 0; i < table.columns.size(); i++)
-			if(table.columns[i].name == condition.column){
-				index = i;
-				break;
-			}
+		size_t index = findColumn(table, condition.column);
 		if(index == -1){
 			std::cerr << "!Failed to " << operation << " table " << transaction.target.name << " because it doesn't contain a condition column named " << condition.column << "." << std::endl;
 			return {};
@@ -330,15 +335,40 @@ std::vector<size_t> applyWhereConditions(sql::Table& table, sql::WhereTransactio
 		// Save the column index of this condition
 		conditionColumns.push_back(index);
 
-		// Validate and adjust the condition's value
-		const sql::Column& column = table.columns[index];
-		if(!sql::Data::validateVariant(column, condition.value, /*parserValidation*/ true)){
-			std::cerr << "!Failed to " << operation << " table " << transaction.target.name << " because column " << column.name
-				<< " in condition has type " << column.type.to_string() << " but comparision data of type "
-				<< sql::Data::variantTypeString(condition.value) << " provided." << std::endl;
-			return {};
+		// If the condition is a column name, find the column associated with the data
+		if(condition.value.index() == 5) {
+			const std::string& dataColumn = std::get<sql::Column>(condition.value).name;
+			size_t dataIndex = findColumn(table, dataColumn);
+			if(index == -1){
+				std::cerr << "!Failed to " << operation << " table " << transaction.target.name << " because it doesn't contain a condition data column named " << dataColumn << "." << std::endl;
+				return {};
+			}
+
+			// If the columns have incompatible data types, error
+			if(!table.columns[index].type.compatibleType(table.columns[dataIndex].type)) {
+				std::cerr << "!Failed to " << operation << " table " << transaction.target.name << " because columns `" << condition.column << "` and `" << dataColumn << "` don't have compatible data types and thus can't be compared." << std::endl;
+				return {};
+			}
+
+			// Mark the column this data's condition comes from
+			conditionDataColumns.push_back(dataIndex);
+
+		// Otherwise validate and adjust the condition's value
+		} else {
+			const sql::Column& column = table.columns[index];
+			auto dataValue = sql::ast::extractData(condition.value);
+			if(!sql::Data::validateVariant(column, dataValue, /*parserValidation*/ true)){
+				std::cerr << "!Failed to " << operation << " table " << transaction.target.name << " because column " << column.name
+					<< " in condition has type " << column.type.to_string() << " but comparision data of type "
+					<< sql::Data::variantTypeString(dataValue) << " provided." << std::endl;
+				return {};
+			}
+			sql::Data::applyColumnAdjustments(column, dataValue);
+			condition.value = sql::ast::flatten(dataValue);
+
+			// Mark that this condition doesn't have a data column
+			conditionDataColumns.push_back(-1);
 		}
-		sql::Data::applyColumnAdjustments(column, condition.value);
 	}
 
 	// For each tuple...
@@ -349,27 +379,29 @@ std::vector<size_t> applyWhereConditions(sql::Table& table, sql::WhereTransactio
 		// Check how many of the conditions hold true for that tuple
 		size_t validations = 0;
 		for(size_t i = 0; i < transaction.conditions.size(); i++){
-			const sql::Data::Variant& data = tuple[conditionColumns[i]].data;
+			const auto& data = tuple[conditionColumns[i]].data;
 			auto& condition = transaction.conditions[i];
+			// If the condition's data comes from the table, grab it; otherwise grab the data stored in the condition
+			const auto conditionData = (condition.value.index() == 5 ? tuple[conditionDataColumns[i]].data : sql::ast::extractData(condition.value));
 
 			switch (condition.comp){
 			break; case sql::WhereTransaction::equal:
-				if(data == condition.value)
+				if(data == conditionData)
 					validations++;
 			break; case sql::WhereTransaction::notEqual:
-				if(data != condition.value)
+				if(data != conditionData)
 					validations++;
 			break; case sql::WhereTransaction::less:
-				if(data < condition.value)
+				if(data < conditionData)
 					validations++;
 			break; case sql::WhereTransaction::greater:
-				if(data > condition.value)
+				if(data > conditionData)
 					validations++;
 			break; case sql::WhereTransaction::lessEqual:
-				if(data <= condition.value)
+				if(data <= conditionData)
 					validations++;
 			break; case sql::WhereTransaction::greaterEqual:
-				if(data >= condition.value)
+				if(data >= conditionData)
 					validations++;
 			break; default:
 				throw std::runtime_error("Unexpected condition");
@@ -677,7 +709,7 @@ void insertIntoTable(const sql::Transaction& _transaction, ProgramState& state){
 			<< " pieces of data but " << transaction.values.size() << " recieved." << std::endl;
 		return;
 	}
-	
+
 	bool valid = true;
 	// For each piece of data the user provided...
 	for(size_t i = 0; i < transaction.values.size(); i++) {
@@ -750,12 +782,7 @@ void queryTable(const sql::Transaction& _transaction, ProgramState& state){
 		// Calculate the indecies of the tuples we need to keep in the projection
 		std::vector<size_t> columnsToKeep;
 		for(std::string column: *transaction.columns){
-			size_t index = -1;
-			for(int i = 0; i < table.columns.size(); i++)
-				if(table.columns[i].name == column) {
-					index = i;
-					break;
-				}
+			size_t index = findColumn(table, column);
 			if(index == -1){
 				std::cerr << "!Failed to query table " << table.name << " because projection column " << column << " doesn't exist." << std::endl;
 				return;
@@ -776,7 +803,7 @@ void queryTable(const sql::Transaction& _transaction, ProgramState& state){
 		}
 
 		// Replace the table with the new projection
-		table = std::move(projectedTable);		
+		table = std::move(projectedTable);
 	}
 
 	// If the table has no metadata then there is nothing to display
@@ -829,12 +856,7 @@ void updateTable(const sql::Transaction& _transaction, ProgramState& state){
 		return;
 
 	// Find the column index that we are updating (error if it doesn't exist)
-	size_t columnIndex = -1;
-	for(size_t i = 0; i < table.columns.size(); i++)
-		if(table.columns[i].name == transaction.column){
-			columnIndex = i;
-			break;
-		}
+	size_t columnIndex = findColumn(table, transaction.column);
 	if(columnIndex == -1){
 		std::cerr << "!Failed to update table " << transaction.target.name << " because it doesn't contain a column named " << transaction.column << "." << std::endl;
 		return;
@@ -850,7 +872,7 @@ void updateTable(const sql::Transaction& _transaction, ProgramState& state){
 		table.tuples[tupleIndex][columnIndex].data = transaction.value;
 
 	std::cout << selectedTuples.size() << " record" << (selectedTuples.size() > 1 ? "s" : "") << " modified." << std::endl;
-	
+
 	// Save changes to disk
 	saveTableFile(table);
 }
@@ -894,7 +916,7 @@ void deleteFromTable(const sql::Transaction& _transaction, ProgramState& state){
 	}
 
 	std::cout << selectedSize << " record" << (selectedSize > 1 ? "s" : "") << " deleted." << std::endl;
-	
+
 	// Save changes to disk
 	saveTableFile(table);
 }

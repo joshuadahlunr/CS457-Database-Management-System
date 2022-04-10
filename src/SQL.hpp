@@ -103,6 +103,19 @@ namespace sql {
 				throw std::runtime_error("Unknown type");
 			}
 		}
+
+		// Function that checks if one data type is compatible with another data type
+		bool compatibleType(const DataType& other) const {
+			switch(type) {
+			break; case BOOL: return other.type == BOOL;
+			break; case INT: return other.type == INT;
+			break; case FLOAT: return other.type == FLOAT;
+			break; case CHAR: return other.type == CHAR || other.type == VARCHAR || other.type == TEXT;
+			break; case VARCHAR: return other.type == CHAR || other.type == VARCHAR || other.type == TEXT;
+			break; case TEXT: return other.type == CHAR || other.type == VARCHAR || other.type == TEXT;
+			break; default: return false;
+			}
+		}
 	};
 	// Datatype De/serialization
 	template<typename same_endian_type> typename simple::file_ostream<same_endian_type>& operator << ( simple::file_ostream<same_endian_type>& s, const DataType& d) {
@@ -198,7 +211,7 @@ namespace sql {
 			break; case DataType::VARCHAR:{
 				std::string str = std::get<std::string>(data);
 
-				// If the string is longer than the data type, truncate it	
+				// If the string is longer than the data type, truncate it
 				if(str.size() > column.type.size)
 					str = str.substr(0, column.type.size);
 
@@ -481,13 +494,42 @@ namespace sql {
 			};
 
 			struct Condition {
+				using Variant = std::variant<std::monostate, bool, int64_t, double, std::string, Column>;
 				std::string column;
 				Comparison comp;
-				Data::Variant value;
+				Variant value;
 			};
 
 			std::vector<Condition> conditions;
 		};
+		// Function that flattens a variant of Data::Variant or a Column into a where condition variant
+		static WhereTransaction::Condition::Variant flatten(std::variant<Column, Data::Variant> v) {
+			if(v.index() == 0)
+				return std::get<Column>(v);
+			else {
+				auto& dv = std::get<Data::Variant>(v);
+				switch(dv.index()){
+				break; case 0: return {};
+				break; case 1: return std::get<bool>(dv);
+				break; case 2: return std::get<int64_t>(dv);
+				break; case 3: return std::get<double>(dv);
+				break; case 4: return std::get<std::string>(dv);
+				break; default: throw std::runtime_error("Unexpected data type");
+				}
+			}
+		}
+		// Function that extracts a Data::Variant from a where condition variant
+		static Data::Variant extractData(WhereTransaction::Condition::Variant v) {
+			switch(v.index()){
+			break; case 0: return {};
+			break; case 1: return std::get<bool>(v);
+			break; case 2: return std::get<int64_t>(v);
+			break; case 3: return std::get<double>(v);
+			break; case 4: return std::get<std::string>(v);
+			break; case 5: return {}; // Columns are treated as being null data for validation purposes
+			break; default: throw std::runtime_error("Unexpected data type");
+			}
+		}
 
 		// Struct representing a table query transaction
 		struct QueryTableTransaction: public WhereTransaction {

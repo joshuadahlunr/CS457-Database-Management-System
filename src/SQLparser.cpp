@@ -66,8 +66,8 @@ namespace sql::grammar {
 
 	// Rule that matches an identifier (as defined in Microsoft's SQL definition)
 	struct Identifier: lexy::token_production {
-		constexpr static auto head = lexy::dsl::unicode::alpha / dsl::lit_c<'_'> / dsl::lit_c<'#'> / dsl::lit_c<'@'>;
-		constexpr static auto tail = lexy::dsl::unicode::alnum / dsl::lit_c<'_'> / dsl::lit_c<'#'> / dsl::lit_c<'@'> / dsl::lit_c<'$'>;
+		constexpr static auto head = dsl::unicode::alpha / dsl::lit_c<'_'> / dsl::lit_c<'#'> / dsl::lit_c<'@'>;
+		constexpr static auto tail = dsl::unicode::alnum / dsl::lit_c<'_'> / dsl::lit_c<'#'> / dsl::lit_c<'@'> / dsl::lit_c<'$'> / dsl::lit_c<'.'>;
 
 		static constexpr auto rule = dsl::peek(head) >> dsl::identifier(head, tail);
 		static constexpr auto value = lexy::as_string<std::string>;
@@ -141,7 +141,7 @@ namespace sql::grammar {
 
 			static constexpr auto rule = [](){
 				auto exp_char = dsl::lit_c<'e'> | dsl::lit_c<'E'>;
-				
+
 				auto hexInt = dsl::peek(LEXY_LIT("0x") / LEXY_LIT("0X")) >> (dsl::p<base_prefix> + dsl::p<hex_integer>);
 				auto nonHexReal = dsl::peek(LEXY_LIT("0b") / LEXY_LIT("0B") / digit<dsl::decimal>) >> (dsl::p<base_prefix> + dsl::opt(dsl::p<decimal_integer>)
 					+ dsl::opt(dsl::lit_c<'.'> >> dsl::p<decimal_integer>) // Fraction
@@ -214,10 +214,10 @@ namespace sql::grammar {
 					in.base = 10;
 					fractionValue = 0;
 				} else
-					throw std::runtime_error("Number is required after prefix specifier");				
-				
+					throw std::runtime_error("Number is required after prefix specifier");
+
 				// Convert the optional fractional portion of the number
-				if(in.fraction.has_value()) 
+				if(in.fraction.has_value())
 					fractionValue += toDecimalFraction(*in.fraction, in.base);
 				// Negate the number if nessicary
 				if(in.integerSign.has_value() && *in.integerSign == sign::type::minus)
@@ -283,7 +283,7 @@ namespace sql::grammar {
 
 			static constexpr auto value = lexy::as_string<std::string, lexy::utf8_encoding>;
 		};
-	
+
 
 		// A boolean value
 		struct boolean : lexy::token_production {
@@ -614,20 +614,30 @@ namespace sql::grammar {
 			static constexpr auto rule = LEXY_LIT(">=");
 			static constexpr auto value = lexy::constant(WhereTransaction::greaterEqual);
 		};
+		// Struct that wraps an identifier into a sql::Column
+		struct ColumnIdentifier {
+			static constexpr auto rule = identifier;
+			static constexpr auto value = lexy::callback<sql::Column>([](auto&& string) {
+				sql::Column c;
+				c.name = string;
+				return c;
+			});
+		};
+
 		// Intermediate struct holding parsed results before they are transformed into a condition
 		struct Intermediate {
 			std::string column;
 			WhereTransaction::Comparison comparison;
-			Data::Variant value;
+			std::variant<Column, Data::Variant> value;
 		};
 
-		// <id> (= | != | < | > | <= | >=) (<string> | <number> | <bool> | <null>)
-		static constexpr auto rule = identifier + (dsl::p<EqualComparison> | dsl::p<NotEqualComparison> | dsl::p<LessComparison> | dsl::p<GreaterComparison> | dsl::p<LessEqualComparison> | dsl::p<GreaterEqualComparison>) + literalVariant;
+		// <id> (= | != | < | > | <= | >=) (<string> | <number> | <bool> | <null> | <id>)
+		static constexpr auto rule = identifier + (dsl::p<EqualComparison> | dsl::p<NotEqualComparison> | dsl::p<LessComparison> | dsl::p<GreaterComparison> | dsl::p<LessEqualComparison> | dsl::p<GreaterEqualComparison>) + (literalVariant | dsl::p<ColumnIdentifier>);
 		static constexpr auto value = lexy::construct<Intermediate> | lexy::callback<WhereTransaction::Condition>([](Intermediate&& in){
 			WhereTransaction::Condition out;
 			out.column = in.column;
 			out.comp = in.comparison;
-			out.value = in.value;
+			out.value = flatten(in.value);
 			return out;
 		});
 
