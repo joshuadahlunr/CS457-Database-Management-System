@@ -770,39 +770,36 @@ void queryTable(const sql::Transaction& _transaction, ProgramState& state){
 	}
 	sql::Database& database = *state.currentDatabase;
 
-	// Create a temporary table and set its metadata
-	sql::Table table;
-	table.name = transaction.target.name;
-	table.path = database.path / (table.name + ".table");
 
-	// Ensure that none of the Table share the same alias
-	auto uniqueEnd = std::unique(transaction.tableAliases.begin(), transaction.tableAliases.end(), [](const auto& a, const auto& b){
-		return a.alias == b.alias;
-	});
-	if(uniqueEnd != transaction.tableAliases.end()){
-		std::cerr << "!Failed to query table " << transaction.target.name << " becuase it contains multiple tables mapped to the same alias." << std::endl;
+	// Ensure that none of the Tables share the same alias
+	auto aliasCopy = transaction.tableAliases;
+	std::sort(aliasCopy.begin(), aliasCopy.end(), [](const auto& a, const auto& b){ return a.alias < b.alias; });
+	auto uniqueEnd = std::unique(aliasCopy.begin(), aliasCopy.end(), [](const auto& a, const auto& b){ return a.alias == b.alias; });
+	if(uniqueEnd != aliasCopy.end()){
+		std::cerr << "!Failed to preform query becuase it contains multiple tables mapped to the same alias." << std::endl;
 		return;
 	}
 
-	// Load the table from disk (helper handles ensuring that it exists)
-	if(!loadTable(table, database, "query"))
-		return;
-	// Add the alias to the table columns' names
-	for(auto& column: table.columns)
-		column.name = transaction.tableAliases[0].alias + "." + column.name;
 
+	// Create a temporary table
+	sql::Table table;
 
-	// If we have to preform a table join...
-	for(size_t i = 1; i < transaction.tableAliases.size(); i++) {
+	// Load all of the tables from disk, cartesian producting them together as nessicary
+	for(size_t i = 0; i < transaction.tableAliases.size(); i++) {
+		auto& alias = transaction.tableAliases[i];
 		// Load the table from disk (helper handles ensuring that it exists)
 		sql::Table tempTable;
-		tempTable.name = transaction.tableAliases[i].table;
-		tempTable.path = database.path / (table.name + ".table");
+		tempTable.name = alias.table;
+		tempTable.path = database.path / (tempTable.name + ".table");
 		if(!loadTable(tempTable, database, "query"))
 			return;
 		// Add the alias to the table columns' names
 		for(auto& column: tempTable.columns)
-			column.name = transaction.tableAliases[i].alias + "." + column.name;
+			column.name = alias.alias + "." + column.name;
+		// Prepend the index of the data to this new table
+		tempTable.columns.insert(tempTable.columns.begin(), {&tempTable, "__index" + std::to_string(i) + "__", {sql::DataType::INT}});
+		for(size_t i = 0; i < tempTable.tuples.size(); i++)
+			tempTable.tuples[i].insert(tempTable.tuples[i].begin(), {(int64_t)i, &tempTable.columns.front()});
 
 
 		// Create a new table with all of the columns of both the old and newly loaded tables
@@ -811,7 +808,14 @@ void queryTable(const sql::Transaction& _transaction, ProgramState& state){
 			cartesianProduct.columns.push_back(column);
 		for(auto& column: tempTable.columns)
 			cartesianProduct.columns.push_back(column);
+
 		// Preform a cartesian product of the tuples in both tables
+		if(table.tuples.empty() && !tempTable.tuples.empty()) {
+			table = std::move(tempTable);
+			continue;
+		}
+		if(!table.tuples.empty() && tempTable.tuples.empty())
+			continue;
 		for(auto& oldTuple: table.tuples)
 			for(auto& newTuple: tempTable.tuples) {
 				auto& tuple = cartesianProduct.createEmptyTuple();
@@ -821,7 +825,23 @@ void queryTable(const sql::Transaction& _transaction, ProgramState& state){
 					tuple[i + offset] = newTuple[i];
 			}
 
-		// Update the table to be the calculated cartesian product
+		// Add extra left and right tuples with opposite null values if we are preforming an outer join
+		if(alias.isOuterJoin()) {
+			// Add all of the left table tuples with null right values
+			for(auto& oldTuple: table.tuples) {
+				auto& leftTuple = cartesianProduct.createEmptyTuple();
+				for(size_t i = 0; i < oldTuple.size(); i++)
+					leftTuple[i] = oldTuple[i];
+			}
+			// Add all of the right table tuples with null left values
+			for(auto& newTuple: tempTable.tuples) {
+				auto& rightTuple = cartesianProduct.createEmptyTuple();
+				for(size_t i = 0, offset = table.columns.size(); i < newTuple.size(); i++)
+					rightTuple[i + offset] = newTuple[i];
+			}
+		}
+
+		// Move the calculated cartesian product to our table
 		table = std::move(cartesianProduct);
 	}
 
@@ -832,6 +852,29 @@ void queryTable(const sql::Transaction& _transaction, ProgramState& state){
 		auto selectedTuples = applyWhereConditions(table, transaction, "query");
 		if(selectedTuples.empty())
 			return;
+
+		// Add in missing left tuples if we are doing a left outer join
+		if(transaction.tableAliases.size() > 1 && transaction.tableAliases[1].isOuterJoin()){
+			// Determine the indecies we have selected
+			std::vector<size_t> indeciesFound;
+			for(size_t selected: selectedTuples)
+				if(!table.tuples[selected][0].isNull())
+					indeciesFound.push_back(std::get<int64_t>(table.tuples[selected][0].data)); // Tuple index 0, since we prepended data to the table
+			// Determine where the index column for the second table is stored
+			size_t rightIndex = findColumn(table, "__index1__");
+
+			// Find all tuples with an index we haven't yet discovered, and a null second half, add them to the table
+			for(size_t i = 0; i < table.tuples.size(); i++){
+				auto& tuple = table.tuples[i];
+				auto dataIndex = tuple[0].isNull() ? -1 : std::get<int64_t>(tuple[0].data);
+				if(std::find(indeciesFound.begin(), indeciesFound.end(), dataIndex) == indeciesFound.end()
+					&& tuple[rightIndex].isNull())
+				{
+					selectedTuples.push_back(i);
+					indeciesFound.push_back(dataIndex);
+				}
+			}
+		}
 
 		// Move the selected tuples into a new array
 		std::vector<sql::Tuple> tuples;
@@ -869,6 +912,16 @@ void queryTable(const sql::Transaction& _transaction, ProgramState& state){
 
 		// Replace the table with the new projection
 		table = std::move(projectedTable);
+
+	// If we are keeping all of the columns, remove the __index#__ columns we added
+	} else {
+		for(size_t i = 0; i < table.columns.size(); i++)
+			if(table.columns[i].name.find("__index") != std::string::npos) {
+				table.columns.erase(table.columns.begin() + i);
+				for(auto& tuple: table.tuples)
+					tuple.erase(tuple.begin() + i);
+				i--;
+			}
 	}
 
 	// If the table has no metadata then there is nothing to display

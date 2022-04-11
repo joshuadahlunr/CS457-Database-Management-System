@@ -534,8 +534,20 @@ namespace sql {
 		// Struct representing a table query transaction
 		struct QueryTableTransaction: public WhereTransaction {
 			struct TableAlias {
+				// The name of the table
 				std::string table;
+				// The alias the table is known by in the query
 				std::string alias;
+
+				// The type of join
+				enum JoinType {
+					Inner,
+					Left
+				};
+				JoinType joinType = Inner;
+
+				// Function which returns true if this is an outer join
+				bool isOuterJoin() { return joinType != Inner; }
 			};
 			// A list of tables that should be joined to construct this query
 			std::vector<TableAlias> tableAliases;

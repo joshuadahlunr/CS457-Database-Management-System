@@ -451,7 +451,27 @@ namespace sql::grammar {
 			static constexpr auto value = lexy::constant(ast::Transaction::Target::Column);
 		};
 		// The COLUMN keyword
-		static constexpr auto column = dsl::peek(UL::c) >>dsl::p<Column>;
+		static constexpr auto column = dsl::peek(UL::c) >> dsl::p<Column>;
+
+
+		// --- Join Type Keywords ---
+
+
+		// Rule that matches the INNER JOIN keyword
+		struct InnerJoin: lexy::token_production {
+			static constexpr auto rule = dsl::if_(UL::i >> UL::n + UL::n + UL::e + UL::r + wsc) + UL::j + UL::o + UL::i + UL::n + wsc;
+			static constexpr auto value = lexy::constant(ast::QueryTableTransaction::TableAlias::Inner);
+		};
+		// The INNER JOIN keyword
+		static constexpr auto innerJoin = dsl::peek(UL::i / UL::j) >> dsl::p<InnerJoin>;
+
+		// Rule that matches the LEFT OUTER JOIN keyword
+		struct LeftOuterJoin: lexy::token_production {
+			static constexpr auto rule = UL::l + UL::e + UL::f + UL::t + wsc + if_(UL::o >> UL::u + UL::t + UL::e + UL::r + wsc) + UL::j + UL::o + UL::i + UL::n + wsc;
+			static constexpr auto value = lexy::constant(ast::QueryTableTransaction::TableAlias::Left);
+		};
+		// The LEFT OUTER JOIN keyword
+		static constexpr auto leftOuterJoin = dsl::peek(UL::l) >> dsl::p<LeftOuterJoin>;
 
 
 		// --- Miscelanious Keywords ---
@@ -504,6 +524,14 @@ namespace sql::grammar {
 		};
 		// The SET keyword
 		static constexpr auto set = dsl::peek(UL::s) >> dsl::p<Set>;
+
+		// Rule that matches the ON keyword
+		struct On: lexy::token_production {
+			static constexpr auto rule = UL::o + UL::n + wsc;
+			static constexpr auto value = lexy::noop;
+		};
+		// The ON keyword
+		static constexpr auto on = dsl::peek(UL::o) >> dsl::p<On>;
 	} // Keyword
 	namespace KW = Keyword;
 
@@ -725,6 +753,7 @@ namespace sql::grammar {
 
 	// Rule that matches a table query
 	struct QueryTableTransaction {
+		// Rule that matches a table name with optional alias
 		struct TableAlias {
 			//id id?
 			static constexpr auto rule = identifier + dsl::opt(identifier);
@@ -739,22 +768,58 @@ namespace sql::grammar {
 			};
 		};
 
+		// Rule that matches a list of table names with explicit join types
+		struct Joins {
+			struct Intermediate {
+				sql::ast::QueryTableTransaction::TableAlias first;
+				std::vector<sql::ast::QueryTableTransaction::TableAlias> tableAliases;
+				std::vector<WhereTransaction::Condition> conditions;
+			};
+			struct TableAliasJoin {
+				// <innerjoin>/<leftjoin> <alias>
+				static constexpr auto rule = (KW::innerJoin | KW::leftOuterJoin) >> dsl::p<TableAlias>;
+				static constexpr auto value = lexy::callback<sql::ast::QueryTableTransaction::TableAlias>([](auto&& join, auto&& alias){
+					return sql::ast::QueryTableTransaction::TableAlias{alias.table, alias.alias, join};
+				});
+
+				// A comma separated list of aliases
+				struct List {
+					static constexpr auto rule = dsl::list(dsl::p<TableAliasJoin>);
+					static constexpr auto value = lexy::as_list<std::vector<sql::ast::QueryTableTransaction::TableAlias>>;
+				};
+			};
+
+			// <alias> <innerjoin>/<leftjoin> <alias>... on <conditions>
+			static constexpr auto rule = dsl::p<TableAlias> + dsl::p<TableAliasJoin::List> + KW::on + whereConditionList;
+			static constexpr auto value = lexy::construct<Intermediate>;
+		};
+
 		// Data acquired from the parse which needs to be rearranged to fit our data structures
 		struct Intermediate {
 			ast::Transaction::Action action;
 			std::optional<std::vector<std::string>> columns;
-			std::vector<sql::ast::QueryTableTransaction::TableAlias> tableAliases;
+			std::variant<Joins::Intermediate, std::vector<sql::ast::QueryTableTransaction::TableAlias>> variant;
 			std::optional<std::vector<WhereTransaction::Condition>> conditions;
 		};
 
-		// select */<id>,... from <aliasList> (where <conditions>)?;
-		static constexpr auto rule = KW::select + (wildcard | identifierList) + KW::from + dsl::p<TableAlias::List> + dsl::opt(whereConditions) + stop;
+		// select */<id>,... from <joins>/<aliasList> (where <conditions>)?;
+		static constexpr auto rule = KW::select + (wildcard | identifierList) + KW::from
+			+ (dsl::lookahead(UL::j, stop) >> dsl::p<Joins> | dsl::else_ >> dsl::p<TableAlias::List>) + dsl::opt(whereConditions) + stop;
 		// Convert the parsed result into a Transcation smart pointer (unified type for all transactions)
 		static constexpr auto value = lexy::construct<Intermediate> | lexy::callback<ast::Transaction::ptr>([](Intermediate&& i) -> ast::Transaction::ptr {
 			using wc = sql::Wildcard<std::vector<std::string>>;
 			wc columns = i.columns.has_value() ? (wc)i.columns.value() : (wc)std::nullopt;
+			std::vector<sql::ast::QueryTableTransaction::TableAlias> tableAliases;
 			auto conditions = i.conditions.has_value() ? *i.conditions : std::vector<WhereTransaction::Condition>{};
-			return std::make_unique<ast::QueryTableTransaction>(ast::QueryTableTransaction{i.action, ast::Transaction::Target{ast::Transaction::Target::Table, i.tableAliases.front().table}, conditions, i.tableAliases, columns});
+			if(i.variant.index() == 0) {
+				auto& ji = std::get<0>(i.variant);
+				tableAliases = std::move(ji.tableAliases);
+				tableAliases.insert(tableAliases.begin(), ji.first);
+				for(auto& con: ji.conditions)
+					conditions.emplace_back(std::move(con));
+			} else
+				tableAliases = std::move(std::get<1>(i.variant));
+			return std::make_unique<ast::QueryTableTransaction>(ast::QueryTableTransaction{i.action, ast::Transaction::Target{ast::Transaction::Target::Table, tableAliases.front().table}, conditions, tableAliases, columns});
 		});
 	};
 
