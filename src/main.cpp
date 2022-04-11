@@ -123,6 +123,14 @@ int main() {
 		std::string input = trim(r.read(false));
 		while(rtrim(input).back() != ';' && tolower(input).find(".exit") == std::string::npos)
 			input += "\n" + trim(r.read(false, "^ "));
+
+		// Remove any comments (and newlines) from the input
+		auto lines = split(input, "\n");
+		input = "";
+		for(size_t i = 0; i < lines.size(); i++)
+			if(auto trimmed = trim(lines[i]); !(trimmed[0] == '-' && trimmed[1] == '-'))
+				input += lines[i] + " ";
+	
 		r.appendToHistory(input);
 
 		// Split the input based on semicolons, so each SQL command is parsed seperately
@@ -929,9 +937,9 @@ void queryTable(const sql::Transaction& _transaction, ProgramState& state){
 		return;
 
 	// Print out the headers
-	std::cout << table.columns[0].name << " " << table.columns[0].type.to_string();
+	std::cout << split(table.columns[0].name, ".").back() << " " << table.columns[0].type.to_string();
 	for(int i = 1; i < table.columns.size(); i++)
-		std::cout << " | " << table.columns[i].name << " " << table.columns[i].type.to_string();
+		std::cout << " | " << split(table.columns[i].name, ".").back() << " " << table.columns[i].type.to_string();
 	std::cout << std::endl;
 
 	// Print out the data
