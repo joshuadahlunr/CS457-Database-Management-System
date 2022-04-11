@@ -3,7 +3,7 @@
  * Author: Joshua Dahl
  * Email: joshuadahl@nevada.unr.edu
  * Created: 2/7/22
- * Modified: 3/14/22
+ * Modified: 4/13/22
  * Description: Provides several data structs which hold database, tables, columns, tuples, etc...,
  * 				also provides transactions the the parser creates as well as serialization for these things.
  *------------------------------------------------------------*/

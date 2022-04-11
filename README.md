@@ -14,7 +14,7 @@ make
 Once the project has been built it can be run using:
 
 ```bash
-./pa2 # In the newly created build directory
+./pa3 # In the newly created build directory
 ```
 There are currently no command line options. Simply start entering SQL in the provided
 prompt.
