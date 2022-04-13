@@ -19,3 +19,7 @@ Once the project has been built it can be run using:
 There are currently no command line options. Simply start entering SQL in the provided
 prompt.
 The “.exit” command can be used to close the application.
+
+A demo (demo.mp4) is included, it shows the program running, the data that was persisted, and a second run to prove persistance.
+
+**NOTE: My DBMS follows the capitalization rules of standard SQL, thus identifiers (tables, column, etc…) are case sensitive while other keywords are not.**
