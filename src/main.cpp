@@ -1180,14 +1180,24 @@ void updateTable(const sql::Action& _action, ProgramState& state){
 		return;
 	}
 
+	// If the data type doesn't match the column then error
+	if(!sql::Data::validateVariant(table.columns[columnIndex], action.value, /*parserValidation*/ true)){
+		std::cerr << "!Failed to update table " << action.target.name << " because column " << table.columns[columnIndex].name
+			<< " in condition has type " << table.columns[columnIndex].type.to_string() << " but new data of type "
+			<< sql::Data::variantTypeString(action.value) << " provided." << std::endl;
+	}
+
 	// Filter out all of the tuples that don't satisfy the conditions
 	auto selectedTuples = applyWhereConditions(table, action, "update");
 	if(selectedTuples.empty())
 		return;
 
 	// Update the value in tuples where all of the conditions hold
-	for(size_t tupleIndex: selectedTuples)
+	for(size_t tupleIndex: selectedTuples) {
 		table.tuples[tupleIndex][columnIndex].data = action.value;
+		table.tuples[tupleIndex][columnIndex].applyColumnAdjustments();
+	}
+
 
 	std::cout << selectedTuples.size() << " record" << (selectedTuples.size() > 1 ? "s" : "") << " modified." << std::endl;
 
