@@ -51,6 +51,7 @@ void query(const sql::Action& action, ProgramState& state);
 void update(const sql::Action& action, ProgramState& state);
 void delete_(const sql::Action& action, ProgramState& state);
 // Execution function prototypes
+void transaction(std::unique_ptr<sql::Action> action, ProgramState& state);
 void useDatabase(const sql::Action& action, ProgramState& state, bool quiet = false);
 void createDatabase(const sql::Action& action, ProgramState& state);
 void createTable(const sql::Action& action, ProgramState& state);
@@ -170,6 +171,8 @@ int main() {
 					update(*action, state);
 				break; case sql::Action::Delete:
 					delete_(*action, state);
+				break; case sql::Action::Transaction:
+					transaction(std::move(action), state);
 				// If the action is unsupported, error
 				break; default:
 					throw std::runtime_error("!Unsupported action: " + sql::Action::ActionNames[action->action]);
@@ -427,6 +430,27 @@ std::vector<size_t> applyWhereConditions(sql::Table& table, sql::WhereAction& ac
 
 // --- Execution Functions ---
 
+// Function that manages the current transaction action
+void transaction(std::unique_ptr<sql::Action> _action, ProgramState& state) {
+	// Sanity checked downcast to the special type of action used by this function
+	if(_action->action != sql::Action::Transaction)
+		throw std::runtime_error("A parsing issue has occured! Somehow a non-TransactionAction has arrived in transaction");
+	auto action = std::unique_ptr<sql::TransactionAction>(reinterpret_cast<sql::TransactionAction*>(_action.release()));
+
+	switch(action->transactionAction) {
+	break; case sql::TransactionAction::Begin: {
+		std::cout << "begin" << std::endl;
+	}
+	break; case sql::TransactionAction::Commit: {
+		std::cout << "commit" << std::endl;
+	}
+	break; case sql::TransactionAction::Abort: {
+		std::cout << "abort" << std::endl;
+	}
+	break; default:
+		throw std::runtime_error("Unexpected transaction action");
+	}
+}
 
 // Function which performs a database use action (updates the current database in the state)
 // NOTE: The success message can be suppressed by passing true to quiet

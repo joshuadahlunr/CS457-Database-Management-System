@@ -474,6 +474,34 @@ namespace sql::grammar {
 		static constexpr auto leftOuterJoin = dsl::peek(UL::l) >> dsl::p<LeftOuterJoin>;
 
 
+		// --- Transaction Keywords ---
+
+
+		// Rule that matches the begin transaction keyword
+		struct BeginTransaction: lexy::token_production {
+			static constexpr auto rule = UL::b + UL::e + UL::g + UL::i + UL::n + if_(wsc >> UL::t + UL::r + UL::a + UL::n + UL::s + UL::a + UL::c + UL::t + UL::i + UL::o + UL::n);
+			static constexpr auto value = lexy::constant(ast::TransactionAction::Begin);
+		};
+		// BEGIN TRANSACTION keyword
+		static constexpr auto beginTransaction = dsl::peek(UL::b) >> dsl::p<BeginTransaction>;
+
+		// Rule that matches the commit transaction keyword
+		struct CommitTransaction: lexy::token_production {
+			static constexpr auto rule = UL::c + UL::o + UL::m + UL::m + UL::i + UL::t + if_(wsc >> UL::t + UL::r + UL::a + UL::n + UL::s + UL::a + UL::c + UL::t + UL::i + UL::o + UL::n);
+			static constexpr auto value = lexy::constant(ast::TransactionAction::Commit);
+		};
+		// COMMIT keyword
+		static constexpr auto commitTransaction = dsl::peek(UL::c + UL::o) >> dsl::p<CommitTransaction>;
+
+		// Rule that matches the abort transaction keyword
+		struct AbortTransaction: lexy::token_production {
+			static constexpr auto rule = UL::a + UL::b + UL::o + UL::r + UL::t + if_(wsc >> UL::t + UL::r + UL::a + UL::n + UL::s + UL::a + UL::c + UL::t + UL::i + UL::o + UL::n);
+			static constexpr auto value = lexy::constant(ast::TransactionAction::Abort);
+		};
+		// ABORT keyword
+		static constexpr auto abortTransaction = dsl::peek(UL::a + UL::b) >> dsl::p<AbortTransaction>;
+
+
 		// --- Miscelanious Keywords ---
 
 
@@ -900,6 +928,16 @@ namespace sql::grammar {
 		});
 	};
 
+	// Rule that matches any kind of transaction action
+	struct TransactionAction {
+		// begin transaction | commit | abort
+		static constexpr auto part = KW::beginTransaction | KW::commitTransaction | KW::abortTransaction;
+		static constexpr auto rule = part + stop;
+		static constexpr auto value = lexy::callback<ast::Action::ptr>([](ast::TransactionAction::ActionPerformed&& action) -> ast::Action::ptr {
+			return std::make_unique<ast::TransactionAction>(ast::TransactionAction{ast::Action::Transaction, {}, action, {}});
+		});
+	};
+
 	// Rule that matches any type of action and forwards the resulting smart pointer
 	struct Action {
 		static constexpr auto whitespace = wsc; // Automatic whitespace
@@ -912,7 +950,8 @@ namespace sql::grammar {
 			| dsl::peek(KW::alter) >> dsl::p<AlterTableAction>
 			| dsl::peek(KW::insert) >> dsl::p<InsertIntoTableAction>
 			| dsl::peek(KW::update) >> dsl::p<UpdateTableAction>
-			| dsl::peek(KW::Delete) >> dsl::p<DeleteFromTableAction>);
+			| dsl::peek(KW::Delete) >> dsl::p<DeleteFromTableAction>
+			| dsl::peek(TransactionAction::part) >> dsl::p<TransactionAction>);
 		static constexpr auto value = lexy::forward<ast::Action::ptr>;
 	};
 

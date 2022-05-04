@@ -428,6 +428,7 @@ namespace sql {
 				Update,
 				Delete,
 				Query,
+				Transaction,
 
 				// Actions specific to table alters // TODO: Should we consildate these into create and drop?
 				Add,
@@ -459,6 +460,19 @@ namespace sql {
 			ActionPerformed action;
 			// The target of this command
 			Target target;
+		};
+
+		// Struct representing a transaction manipulation action
+		struct TransactionAction : public Action {
+			enum ActionPerformed {
+				Invalid,
+				Begin,
+				Commit,
+				Abort,
+			};
+			ActionPerformed transactionAction;
+
+			std::map<std::filesystem::path, Table*> modifiedTables;
 		};
 
 		// Struct representing a table creation action
