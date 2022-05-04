@@ -288,7 +288,16 @@ inline void delete_(const sql::Action& action, ProgramState& state){
 template<typename Key, typename Value>
 bool contains(const std::map<Key, Value>& map, const Key& needle) { return map.find(needle) != map.end(); }
 
-// Function that creates a version of the file's path with the current thread ID appended to the filename
+// Helper function that aborts the current transaction (if it exists) and returns cerr so an error message can be displayed
+std::ostream& abort(ProgramState& state) {
+	if(state.transaction) {
+		auto action = std::make_unique<sql::TransactionAction>(sql::TransactionAction{sql::Action::Transaction, {}, sql::TransactionAction::Abort, {}});
+		transaction(std::move(action), state);
+	}
+	return std::cerr;
+}
+
+// Helper function that creates a version of the file's path with the current thread ID appended to the filename
 std::filesystem::path threadLocalFile(const std::filesystem::path& path) {
 	std::stringstream tid; tid << std::this_thread::get_id();
 	auto root = path;
@@ -296,12 +305,12 @@ std::filesystem::path threadLocalFile(const std::filesystem::path& path) {
 	return root.remove_filename() / (tid.str() + "." + path.filename().string());
 }
 
-// Function that creates a version of the file's path that is a lock file
+// Helper function that creates a version of the file's path that is a lock file
 std::filesystem::path lockFile(const std::filesystem::path& path) {
 	return path.string() + ".lock";
 }
 
-// Function that return true if a lock can be taken, for a table, false otherwise
+// Helper function that return true if a lock can be taken, for a table, false otherwise
 bool handleTableLock(const sql::Table& table, std::string operation, ProgramState& state) {
 	// Determine the lock path and our thread id
 	auto lock = lockFile(table.path);
@@ -318,7 +327,7 @@ bool handleTableLock(const sql::Table& table, std::string operation, ProgramStat
 
 		// If the thread id is not our ID then then we failed to take the lock
 		if(tid != lockTID){
-			std::cerr << "!Failed to " << operation << " table " << table.name << " because it is locked by another process." << std::endl;
+			abort(state) << "!Failed to " << operation << " table " << table.name << " because it is locked by another process." << std::endl;
 			return false;
 		}
 	// If the lock doesn't exist and we are in a transaction, create the lock file and save our tid to it
@@ -331,7 +340,7 @@ bool handleTableLock(const sql::Table& table, std::string operation, ProgramStat
 	return true;
 }
 
-// File that releases a lock on a table if we control the lock
+// Helper function that releases a lock on a table if we control the lock
 void releaseLock(const std::filesystem::path& tablePath) {
 	// Determine the lock path and our thread id
 	auto lock = lockFile(tablePath);
@@ -376,7 +385,7 @@ void saveTableFile(const sql::Table& table, std::string operation, ProgramState&
 bool loadTable(sql::Table& table, const sql::Database& database, std::string operation, ProgramState& state){
 	// Ensure that the table exists in the current database
 	if(std::find(database.tables.begin(), database.tables.end(), table.path) == database.tables.end()){
-		std::cerr << "!Failed to " << operation << " table " << table.name << " because it doesn't exist." << std::endl;
+		abort(state) << "!Failed to " << operation << " table " << table.name << " because it doesn't exist." << std::endl;
 		return false;
 	}
 
@@ -388,7 +397,7 @@ bool loadTable(sql::Table& table, const sql::Database& database, std::string ope
 
 	// Ensure that the table exists on disk and load it
 	if(!exists(table.path)){
-		std::cerr << "!Failed to " << operation << " table " << table.name << " because it does not exist." << std::endl;
+		abort(state) << "!Failed to " << operation << " table " << table.name << " because it does not exist." << std::endl;
 		return false;
 	}
 	simple::file_istream<std::true_type> fin(path.c_str());
@@ -401,7 +410,7 @@ bool loadTable(sql::Table& table, const sql::Database& database, std::string ope
 
 		return true;
 	} catch(std::runtime_error) {
-		std::cerr << "!Failed to " << operation << " table " << table.name << " because it is corupted." << std::endl;
+		abort(state) << "!Failed to " << operation << " table " << table.name << " because it is corupted." << std::endl;
 	}
 
 	// If we failed for any reason then close the file and return false
@@ -703,7 +712,7 @@ void createTable(const sql::Action& _action, ProgramState& state){
 
 	// Make sure that a database is currently being used
 	if(!state.currentDatabase.has_value()){
-		std::cerr << "!Failed to create table " << action.target.name << " because no database is currently being used." << std::endl;
+		abort(state) << "!Failed to create table " << action.target.name << " because no database is currently being used." << std::endl;
 		return;
 	}
 	sql::Database& database = *state.currentDatabase;
@@ -797,7 +806,7 @@ void alterTable(const sql::Action& _action, ProgramState& state){
 
 	// Make sure that a database is currently being used
 	if(!state.currentDatabase.has_value()){
-		std::cerr << "!Failed to alter table " << action.target.name << " because no database is currently being used." << std::endl;
+		abort(state) << "!Failed to alter table " << action.target.name << " because no database is currently being used." << std::endl;
 		return;
 	}
 	sql::Database& database = *state.currentDatabase;
@@ -891,7 +900,7 @@ void insertIntoTable(const sql::Action& _action, ProgramState& state){
 
 	// Make sure that a database is currently being used
 	if(!state.currentDatabase.has_value()){
-		std::cerr << "!Failed to insert into table " << action.target.name << " because no database is currently being used." << std::endl;
+		abort(state) << "!Failed to insert into table " << action.target.name << " because no database is currently being used." << std::endl;
 		return;
 	}
 	sql::Database& database = *state.currentDatabase;
@@ -955,7 +964,7 @@ void queryTable(const sql::Action& _action, ProgramState& state){
 
 	// Make sure that a database is currently being used
 	if(!state.currentDatabase.has_value()){
-		std::cerr << "!Failed to query table " << action.target.name << " because no database is currently being used." << std::endl;
+		abort(state) << "!Failed to query table " << action.target.name << " because no database is currently being used." << std::endl;
 		return;
 	}
 	sql::Database& database = *state.currentDatabase;
@@ -1155,7 +1164,7 @@ void updateTable(const sql::Action& _action, ProgramState& state){
 
 	// Make sure that a database is currently being used
 	if(!state.currentDatabase.has_value()){
-		std::cerr << "!Failed to update table " << action.target.name << " because no database is currently being used." << std::endl;
+		abort(state) << "!Failed to update table " << action.target.name << " because no database is currently being used." << std::endl;
 		return;
 	}
 	sql::Database& database = *state.currentDatabase;
@@ -1214,7 +1223,7 @@ void deleteFromTable(const sql::Action& _action, ProgramState& state){
 
 	// Make sure that a database is currently being used
 	if(!state.currentDatabase.has_value()){
-		std::cerr << "!Failed to update table " << action.target.name << " because no database is currently being used." << std::endl;
+		abort(state) << "!Failed to update table " << action.target.name << " because no database is currently being used." << std::endl;
 		return;
 	}
 	sql::Database& database = *state.currentDatabase;
