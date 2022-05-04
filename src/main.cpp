@@ -24,6 +24,7 @@
 #include <utility>
 #include <variant>
 #include <vector>
+#include <thread>
 
 #include "reader.hpp"
 #include "SQLparser.hpp"
@@ -39,6 +40,9 @@ struct ProgramState {
 	std::filesystem::path databaseDirectory = std::filesystem::current_path();
 	// The database we are currently managing (it is optional since at the start of the program we will not be managing a database)
 	std::optional<sql::Database> currentDatabase;
+
+	// Pointer to the current transaction, if it is null that means there isn't currently a transaction
+	std::unique_ptr<sql::TransactionAction> transaction = nullptr;
 };
 
 // Dispatcher function prototypes
@@ -131,7 +135,7 @@ int main() {
 		for(size_t i = 0; i < lines.size(); i++)
 			if(auto trimmed = trim(lines[i]); !(trimmed[0] == '-' && trimmed[1] == '-'))
 				input += lines[i] + " ";
-	
+
 		r.appendToHistory(input);
 
 		// Split the input based on semicolons, so each SQL command is parsed seperately
@@ -280,6 +284,17 @@ inline void delete_(const sql::Action& action, ProgramState& state){
 
 // --- Helpers ---
 
+// Helper function that checks if a map contains a key
+template<typename Key, typename Value>
+bool contains(const std::map<Key, Value>& map, const Key& needle) { return map.find(needle) != map.end(); }
+
+// Function that creates a version of the file's path with the current thread ID appended to the filename
+std::filesystem::path threadLocalFile(const std::filesystem::path& path) {
+	std::stringstream tid; tid << std::this_thread::get_id();
+	auto root = path;
+
+	return root.remove_filename() / (tid.str() + "." + path.filename().string());
+}
 
 // Helper function that saves a database's metadata
 void saveDatabaseMetadataFile(const sql::Database database){
@@ -289,30 +304,49 @@ void saveDatabaseMetadataFile(const sql::Database database){
 }
 
 // Helper function that saves a table's metadata and data
-void saveTableFile(const sql::Table table){
-	simple::file_ostream<std::true_type> fout(table.path.c_str());
+void saveTableFile(const sql::Table& table, ProgramState& state){
+	// TODO: create lock (or fail if someone else has lock)
+
+	// If we have a transaction, overwrite the path with a temporary one for the transaction
+	auto path = table.path;
+	if(state.transaction)
+		path = state.transaction->tables[table.path] = threadLocalFile(table.path);
+
+	// Save the table to disk
+	simple::file_ostream<std::true_type> fout(path.c_str());
 	fout << table;
 	fout.close();
 }
 
 // Helper that loads a table from file (also ensures that exists, both on disk and in the database)
-bool loadTable(sql::Table& table, const sql::Database& database, std::string operation){
+bool loadTable(sql::Table& table, const sql::Database& database, std::string operation, ProgramState& state){
 	// Ensure that the table exists in the current database
 	if(std::find(database.tables.begin(), database.tables.end(), table.path) == database.tables.end()){
 		std::cerr << "!Failed to " << operation << " table " << table.name << " because it doesn't exist." << std::endl;
 		return false;
 	}
 
+	// TODO: create lock (or fail if someone else has lock)
+
+	// If the transaction has already overriden this table, load data from the temporary path
+	auto path = table.path;
+	auto pathCache = table.path; // Save the old path to the table, so we don't succesively grow its path
+	if(state.transaction && contains(state.transaction->tables, table.path))
+		path = state.transaction->tables[table.path];
+
 	// Ensure that the table exists on disk and load it
 	if(!exists(table.path)){
 		std::cerr << "!Failed to " << operation << " table " << table.name << " because it does not exist." << std::endl;
 		return false;
 	}
-	simple::file_istream<std::true_type> fin(table.path.c_str());
+	simple::file_istream<std::true_type> fin(path.c_str());
 	try {
 		// Load the table
 		fin >> table;
 		fin.close();
+		// Make sure the table's path is the path to the original table
+		table.path = pathCache;
+
 		return true;
 	} catch(std::runtime_error) {
 		std::cerr << "!Failed to " << operation << " table " << table.name << " because it is corupted." << std::endl;
@@ -431,21 +465,61 @@ std::vector<size_t> applyWhereConditions(sql::Table& table, sql::WhereAction& ac
 // --- Execution Functions ---
 
 // Function that manages the current transaction action
-void transaction(std::unique_ptr<sql::Action> _action, ProgramState& state) {
+void transaction(std::unique_ptr<sql::Action> action, ProgramState& state) {
 	// Sanity checked downcast to the special type of action used by this function
-	if(_action->action != sql::Action::Transaction)
+	if(action->action != sql::Action::Transaction)
 		throw std::runtime_error("A parsing issue has occured! Somehow a non-TransactionAction has arrived in transaction");
-	auto action = std::unique_ptr<sql::TransactionAction>(reinterpret_cast<sql::TransactionAction*>(_action.release()));
+	auto transaction = std::unique_ptr<sql::TransactionAction>(reinterpret_cast<sql::TransactionAction*>(action.release()));
 
-	switch(action->transactionAction) {
+	switch(transaction->transactionAction) {
 	break; case sql::TransactionAction::Begin: {
-		std::cout << "begin" << std::endl;
+		// If there is already a transaction, then we fail to start a new one
+		if(state.transaction != nullptr) {
+			std::cerr << "!Failed to begin transaction because another transaction has already been started." << std::endl;
+			return;
+		}
+
+		// Transfer ownership of this transaction to the program state
+		state.transaction = std::move(transaction);
+		
+		std::cout << "Transaction started." << std::endl;
 	}
 	break; case sql::TransactionAction::Commit: {
-		std::cout << "commit" << std::endl;
+		// If there is not already a transaction, then we fail to finish it
+		if(state.transaction == nullptr) {
+			std::cerr << "!Failed to commit transaction because one has not been started." << std::endl;
+			return;
+		}
+
+		// Overwrite the tables with the modififed versions from the transaction
+		for(auto& [dest, src]: state.transaction->tables) {
+			copy(src, dest, std::filesystem::copy_options::overwrite_existing);
+			remove(src);
+			// TODO: Remove lock
+		}
+
+		// We are no longer in a transaction
+		state.transaction = nullptr;
+
+		std::cout << "Transaction committed." << std::endl;
 	}
 	break; case sql::TransactionAction::Abort: {
-		std::cout << "abort" << std::endl;
+		// If there is not already a transaction, then we fail to finish it
+		if(state.transaction == nullptr) {
+			std::cerr << "!Failed to abort transaction because one has not been started." << std::endl;
+			return;
+		}
+
+		// Discard the modified versions of the tables
+		for(auto& [_, modified]: state.transaction->tables) {
+			remove(modified);
+			// TODO: Remove lock
+		}
+
+		// We are no longer in a transaction
+		state.transaction = nullptr;
+
+		std::cout << "Transaction aborted." << std::endl;
 	}
 	break; default:
 		throw std::runtime_error("Unexpected transaction action");
@@ -463,6 +537,12 @@ void useDatabase(const sql::Action& action, ProgramState& state, bool quiet /*= 
 	// If the database directory doesn't already exist, error
 	if(!exists(database.path)){
 		std::cerr << "!Failed to use database " << database.name << " because it doesn't exist." << std::endl;
+		return;
+	}
+
+	// If there is currently a transaction, error
+	if(state.transaction) {
+		std::cerr << "!Failed to use database " << database.name << " because you can't switch databases during a transaction." << std::endl;
 		return;
 	}
 
@@ -505,6 +585,12 @@ void createDatabase(const sql::Action& action, ProgramState& state){
 		return;
 	}
 
+	// If there is currently a transaction, error
+	if(state.transaction) {
+		std::cerr << "!Failed to create database " << database.name << " because you can't create databases during a transaction." << std::endl;
+		return;
+	}
+
 	// Create directorty for the database and save metadata file
 	std::filesystem::create_directory(database.path);
 	saveDatabaseMetadataFile(database);
@@ -526,6 +612,12 @@ void dropDatabase(const sql::Action& action, ProgramState& state){
 	// If the database directory doesn't already exist, error
 	if(!exists(database.path)){
 		std::cerr << "!Failed to delete database " << database.name << " because it doesn't exist." << std::endl;
+		return;
+	}
+
+	// If there is currently a transaction, error
+	if(state.transaction) {
+		std::cerr << "!Failed to delete database " << database.name << " because you can't delete databases during a transaction." << std::endl;
 		return;
 	}
 
@@ -599,7 +691,7 @@ void createTable(const sql::Action& _action, ProgramState& state){
 	database.tables.push_back(table.path);
 
 	// Save the changes to disk
-	saveTableFile(table);
+	saveTableFile(table, state);
 	saveDatabaseMetadataFile(database);
 
 	std::cout << "Table " << table.name << " created." << std::endl;
@@ -619,6 +711,12 @@ void dropTable(const sql::Action& action, ProgramState& state){
 	// Ensure that the table doesn't already exist
 	if(!exists(tablePath)){
 		std::cerr << "!Failed to delete table " << action.target.name << " because it doesn't exist." << std::endl;
+		return;
+	}
+
+	// If there is currently a transaction, error
+	if(state.transaction) {
+		std::cerr << "!Failed to delete table " << action.target.name << " because you can't delete tables during a transaction." << std::endl;
 		return;
 	}
 
@@ -658,7 +756,7 @@ void alterTable(const sql::Action& _action, ProgramState& state){
 	table.path = database.path / (table.name + ".table");
 
 	// Load the table from disk (helper handles ensuring that it exists)
-	if(!loadTable(table, database, "alter"))
+	if(!loadTable(table, database, "alter", state))
 		return;
 
 	// Find the index of the target column
@@ -725,7 +823,7 @@ void alterTable(const sql::Action& _action, ProgramState& state){
 	}
 
 	// Save changes to disk
-	saveTableFile(table);
+	saveTableFile(table, state);
 }
 
 // Function which inserts a new tuple into a table
@@ -748,7 +846,7 @@ void insertIntoTable(const sql::Action& _action, ProgramState& state){
 	table.path = database.path / (table.name + ".table");
 
 	// Load the table from disk (helper handles ensuring that it exists)
-	if(!loadTable(table, database, "insert into"))
+	if(!loadTable(table, database, "insert into", state))
 		return;
 
 	// Create a new empty tuple in the table
@@ -785,7 +883,7 @@ void insertIntoTable(const sql::Action& _action, ProgramState& state){
 	std::cout << "1 new record inserted." << std::endl;
 
 	// Save changes to disk
-	saveTableFile(table);
+	saveTableFile(table, state);
 }
 
 // Function which performs a query on the data in a table
@@ -815,6 +913,8 @@ void queryTable(const sql::Action& _action, ProgramState& state){
 
 	// Create a temporary table
 	sql::Table table;
+	// A null bit of state, used so that queries always load from disk instead of the current transaction
+	ProgramState nullState;
 
 	// Load all of the tables from disk, cartesian producting them together as nessicary
 	for(size_t i = 0; i < action.tableAliases.size(); i++) {
@@ -823,7 +923,7 @@ void queryTable(const sql::Action& _action, ProgramState& state){
 		sql::Table tempTable;
 		tempTable.name = alias.table;
 		tempTable.path = database.path / (tempTable.name + ".table");
-		if(!loadTable(tempTable, database, "query"))
+		if(!loadTable(tempTable, database, "query", nullState))
 			return;
 		// Add the alias to the table columns' names
 		for(auto& column: tempTable.columns)
@@ -960,6 +1060,10 @@ void queryTable(const sql::Action& _action, ProgramState& state){
 	if(table.columns.empty())
 		return;
 
+	// If there is an active transaction, warn that the show data is outdated
+	if(state.transaction)
+		std::cout << "NOTE: There is an active transaction, commit the transaction to see its data!" << std::endl;
+
 	// Print out the headers
 	std::cout << split(table.columns[0].name, ".").back() << " " << table.columns[0].type.to_string();
 	for(int i = 1; i < table.columns.size(); i++)
@@ -1002,7 +1106,7 @@ void updateTable(const sql::Action& _action, ProgramState& state){
 	table.path = database.path / (table.name + ".table");
 
 	// Load the table from disk (helper handles ensuring that it exists)
-	if(!loadTable(table, database, "update"))
+	if(!loadTable(table, database, "update", state))
 		return;
 
 	// Find the column index that we are updating (error if it doesn't exist)
@@ -1024,7 +1128,7 @@ void updateTable(const sql::Action& _action, ProgramState& state){
 	std::cout << selectedTuples.size() << " record" << (selectedTuples.size() > 1 ? "s" : "") << " modified." << std::endl;
 
 	// Save changes to disk
-	saveTableFile(table);
+	saveTableFile(table, state);
 }
 
 // Function which deletes some data from a table
@@ -1047,7 +1151,7 @@ void deleteFromTable(const sql::Action& _action, ProgramState& state){
 	table.path = database.path / (table.name + ".table");
 
 	// Load the table from disk (helper handles ensuring that it exists)
-	if(!loadTable(table, database, "delete from"))
+	if(!loadTable(table, database, "delete from", state))
 		return;
 
 	// Filter out all of the tuples that don't satisfy the conditions
@@ -1068,5 +1172,5 @@ void deleteFromTable(const sql::Action& _action, ProgramState& state){
 	std::cout << selectedSize << " record" << (selectedSize > 1 ? "s" : "") << " deleted." << std::endl;
 
 	// Save changes to disk
-	saveTableFile(table);
+	saveTableFile(table, state);
 }

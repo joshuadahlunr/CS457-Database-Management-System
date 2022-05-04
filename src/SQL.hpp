@@ -472,7 +472,8 @@ namespace sql {
 			};
 			ActionPerformed transactionAction;
 
-			std::map<std::filesystem::path, Table*> modifiedTables;
+			// Map from a table's path to the temporary path of the table in this transaction
+			std::map<std::filesystem::path, std::filesystem::path> tables;
 		};
 
 		// Struct representing a table creation action
