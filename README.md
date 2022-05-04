@@ -7,19 +7,19 @@ To actually build, navigate to the root directory of the project (the one contai
 ```bash
 mkdir build
 cd build
-cmake .. # If this step fails try again with CXX=g++ cmake ..
+cmake .. # If this step fails try again with: CXX=g++ cmake ..
 make
 ```
 
 Once the project has been built it can be run using:
 
 ```bash
-./pa3 # In the newly created build directory
+./pa4 # In the newly created build directory
 ```
 There are currently no command line options. Simply start entering SQL in the provided
 prompt.
 The “.exit” command can be used to close the application.
 
-A demo (demo.mp4) is included, it shows the program running, the data that was persisted, and a second run to prove persistance.
+A demo (demo.mp4) is included, it shows the program running with operations multiplexed between the two processes. During the entire demo the folder representing the database is open in the top left where all of the changes being made can be observed.
 
 **NOTE: My DBMS follows the capitalization rules of standard SQL, thus identifiers (tables, column, etc…) are case sensitive while other keywords are not.**
