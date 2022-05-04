@@ -296,6 +296,62 @@ std::filesystem::path threadLocalFile(const std::filesystem::path& path) {
 	return root.remove_filename() / (tid.str() + "." + path.filename().string());
 }
 
+// Function that creates a version of the file's path that is a lock file
+std::filesystem::path lockFile(const std::filesystem::path& path) {
+	return path.string() + ".lock";
+}
+
+// Function that return true if a lock can be taken, for a table, false otherwise
+bool handleTableLock(const sql::Table& table, std::string operation, ProgramState& state) {
+	// Determine the lock path and our thread id
+	auto lock = lockFile(table.path);
+	std::stringstream _tid; _tid << std::this_thread::get_id();
+	auto tid = _tid.str();
+
+	// If the lock exists...
+	if(exists(lock)){
+		// Read the thread id from the file
+		std::ifstream fin(lock);
+		std::string lockTID;
+		fin >> lockTID;
+		fin.close();
+
+		// If the thread id is not our ID then then we failed to take the lock
+		if(tid != lockTID){
+			std::cerr << "!Failed to " << operation << " table " << table.name << " because it is locked by another process." << std::endl;
+			return false;
+		}
+	// If the lock doesn't exist and we are in a transaction, create the lock file and save our tid to it
+	} else if(state.transaction) {
+		std::ofstream fout(lock);
+		fout << tid;
+		fout.close();
+	}
+
+	return true;
+}
+
+// File that releases a lock on a table if we control the lock
+void releaseLock(const std::filesystem::path& tablePath) {
+	// Determine the lock path and our thread id
+	auto lock = lockFile(tablePath);
+	std::stringstream _tid; _tid << std::this_thread::get_id();
+	auto tid = _tid.str();
+
+	// If the lock exists...
+	if(exists(lock)){
+		// Read the thread id from the file
+		std::ifstream fin(lock);
+		std::string lockTID;
+		fin >> lockTID;
+		fin.close();
+
+		// If the thread id is our ID, the remove the lock
+		if(tid == lockTID)
+			remove(lock);
+	}
+}
+
 // Helper function that saves a database's metadata
 void saveDatabaseMetadataFile(const sql::Database database){
 	simple::file_ostream<std::true_type> fout((database.path / metadataFileName).c_str());
@@ -304,9 +360,7 @@ void saveDatabaseMetadataFile(const sql::Database database){
 }
 
 // Helper function that saves a table's metadata and data
-void saveTableFile(const sql::Table& table, ProgramState& state){
-	// TODO: create lock (or fail if someone else has lock)
-
+void saveTableFile(const sql::Table& table, std::string operation, ProgramState& state){
 	// If we have a transaction, overwrite the path with a temporary one for the transaction
 	auto path = table.path;
 	if(state.transaction)
@@ -325,8 +379,6 @@ bool loadTable(sql::Table& table, const sql::Database& database, std::string ope
 		std::cerr << "!Failed to " << operation << " table " << table.name << " because it doesn't exist." << std::endl;
 		return false;
 	}
-
-	// TODO: create lock (or fail if someone else has lock)
 
 	// If the transaction has already overriden this table, load data from the temporary path
 	auto path = table.path;
@@ -481,7 +533,7 @@ void transaction(std::unique_ptr<sql::Action> action, ProgramState& state) {
 
 		// Transfer ownership of this transaction to the program state
 		state.transaction = std::move(transaction);
-		
+
 		std::cout << "Transaction started." << std::endl;
 	}
 	break; case sql::TransactionAction::Commit: {
@@ -495,7 +547,7 @@ void transaction(std::unique_ptr<sql::Action> action, ProgramState& state) {
 		for(auto& [dest, src]: state.transaction->tables) {
 			copy(src, dest, std::filesystem::copy_options::overwrite_existing);
 			remove(src);
-			// TODO: Remove lock
+			releaseLock(dest);
 		}
 
 		// We are no longer in a transaction
@@ -511,9 +563,9 @@ void transaction(std::unique_ptr<sql::Action> action, ProgramState& state) {
 		}
 
 		// Discard the modified versions of the tables
-		for(auto& [_, modified]: state.transaction->tables) {
+		for(auto& [original, modified]: state.transaction->tables) {
 			remove(modified);
-			// TODO: Remove lock
+			releaseLock(original);
 		}
 
 		// We are no longer in a transaction
@@ -691,7 +743,7 @@ void createTable(const sql::Action& _action, ProgramState& state){
 	database.tables.push_back(table.path);
 
 	// Save the changes to disk
-	saveTableFile(table, state);
+	saveTableFile(table, "create", state);
 	saveDatabaseMetadataFile(database);
 
 	std::cout << "Table " << table.name << " created." << std::endl;
@@ -754,6 +806,10 @@ void alterTable(const sql::Action& _action, ProgramState& state){
 	sql::Table table;
 	table.name = action.target.name;
 	table.path = database.path / (table.name + ".table");
+
+	// Create lock (or fail if someone else has lock)
+	if(!handleTableLock(table, "alter", state))
+		return;
 
 	// Load the table from disk (helper handles ensuring that it exists)
 	if(!loadTable(table, database, "alter", state))
@@ -823,7 +879,7 @@ void alterTable(const sql::Action& _action, ProgramState& state){
 	}
 
 	// Save changes to disk
-	saveTableFile(table, state);
+	saveTableFile(table, "alter", state);
 }
 
 // Function which inserts a new tuple into a table
@@ -844,6 +900,10 @@ void insertIntoTable(const sql::Action& _action, ProgramState& state){
 	sql::Table table;
 	table.name = action.target.name;
 	table.path = database.path / (table.name + ".table");
+
+	// Create lock (or fail if someone else has lock)
+	if(!handleTableLock(table, "insert into", state))
+		return;
 
 	// Load the table from disk (helper handles ensuring that it exists)
 	if(!loadTable(table, database, "insert into", state))
@@ -883,7 +943,7 @@ void insertIntoTable(const sql::Action& _action, ProgramState& state){
 	std::cout << "1 new record inserted." << std::endl;
 
 	// Save changes to disk
-	saveTableFile(table, state);
+	saveTableFile(table, "insert into", state);
 }
 
 // Function which performs a query on the data in a table
@@ -1105,6 +1165,10 @@ void updateTable(const sql::Action& _action, ProgramState& state){
 	table.name = action.target.name;
 	table.path = database.path / (table.name + ".table");
 
+	// Create lock (or fail if someone else has lock)
+	if(!handleTableLock(table, "update", state))
+		return;
+
 	// Load the table from disk (helper handles ensuring that it exists)
 	if(!loadTable(table, database, "update", state))
 		return;
@@ -1128,7 +1192,7 @@ void updateTable(const sql::Action& _action, ProgramState& state){
 	std::cout << selectedTuples.size() << " record" << (selectedTuples.size() > 1 ? "s" : "") << " modified." << std::endl;
 
 	// Save changes to disk
-	saveTableFile(table, state);
+	saveTableFile(table, "update", state);
 }
 
 // Function which deletes some data from a table
@@ -1149,6 +1213,10 @@ void deleteFromTable(const sql::Action& _action, ProgramState& state){
 	sql::Table table;
 	table.name = action.target.name;
 	table.path = database.path / (table.name + ".table");
+
+	// Create lock (or fail if someone else has lock)
+	if(!handleTableLock(table, "delete from", state))
+		return;
 
 	// Load the table from disk (helper handles ensuring that it exists)
 	if(!loadTable(table, database, "delete from", state))
@@ -1172,5 +1240,5 @@ void deleteFromTable(const sql::Action& _action, ProgramState& state){
 	std::cout << selectedSize << " record" << (selectedSize > 1 ? "s" : "") << " deleted." << std::endl;
 
 	// Save changes to disk
-	saveTableFile(table, state);
+	saveTableFile(table, "delete from", state);
 }
