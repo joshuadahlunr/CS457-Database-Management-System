@@ -5,7 +5,7 @@
  * Created: 2/7/22
  * Modified: 4/13/22
  * Description: Provides several data structs which hold database, tables, columns, tuples, etc...,
- * 				also provides transactions the the parser creates as well as serialization for these things.
+ * 				also provides actions the the parser creates as well as serialization for these things.
  *------------------------------------------------------------*/
 
 #ifndef SQL_HPP
@@ -409,16 +409,16 @@ namespace sql {
 	}
 
 
-	// Inline namespaces are optional, sql::ast::Transaction can also be accessed with sql::Transaction (the ast label is used in parser code to avoid ambiguities)
+	// Inline namespaces are optional, sql::ast::Action can also be accessed with sql::Action (the ast label is used in parser code to avoid ambiguities)
 	inline namespace ast {
 
 		// Struct which represents a single command provided by the user
-		struct Transaction {
-			// Smart pointer wrapper around a transaction
-			using ptr = std::unique_ptr<ast::Transaction>;
+		struct Action {
+			// Smart pointer wrapper around a action
+			using ptr = std::unique_ptr<ast::Action>;
 
-			// Actions a transaction can be performing
-			enum Action {
+			// Actions a action can be performing
+			enum ActionPerformed {
 				Invalid,
 				Use,
 				Create,
@@ -435,7 +435,7 @@ namespace sql {
 
 				MAX
 			};
-			static const std::array<std::string, Action::MAX> ActionNames; //= {"Invalid", "Use", "Create", "Drop", "Alter", "Insert", "Update", "Delete", "Query", "Add", "Remove"};
+			static const std::array<std::string, ActionPerformed::MAX> ActionNames; //= {"Invalid", "Use", "Create", "Drop", "Alter", "Insert", "Update", "Delete", "Query", "Add", "Remove"};
 
 			// Struct which represents the target of this command
 			struct Target {
@@ -456,34 +456,34 @@ namespace sql {
 			};
 
 			// The action to be taken by this command
-			Action action;
+			ActionPerformed action;
 			// The target of this command
 			Target target;
 		};
 
-		// Struct representing a table creation transaction
-		struct CreateTableTransaction: public Transaction {
+		// Struct representing a table creation action
+		struct CreateTableAction: public Action {
 			// The column metadata to create the table with
 			std::vector<Column> columns;
 		};
 
-		// Struct representing a table alteration transaction
-		struct AlterTableTransaction: public Transaction {
+		// Struct representing a table alteration action
+		struct AlterTableAction: public Action {
 			// The action to be taken on a column of the table
-			Action alterAction;
+			ActionPerformed alterAction;
 			// The column of the table to be altered
 			Column alterTarget;  // Remove only uses the name, ignoring the datatype
 		};
 
-		// Struct representing a transaction that inserts a new tuple into the table
-		struct InsertIntoTableTransaction: public Transaction {
+		// Struct representing a action that inserts a new tuple into the table
+		struct InsertIntoTableAction: public Action {
 			// The values to be inserted
 			std::vector<Data::Variant> values;
 		};
 
 
-		// Struct representing a transaction with a set of where clauses
-		struct WhereTransaction: public Transaction {
+		// Struct representing a action with a set of where clauses
+		struct WhereAction: public Action {
 			enum Comparison {
 				equal,
 				notEqual,
@@ -503,7 +503,7 @@ namespace sql {
 			std::vector<Condition> conditions;
 		};
 		// Function that flattens a variant of Data::Variant or a Column into a where condition variant
-		static WhereTransaction::Condition::Variant flatten(std::variant<Column, Data::Variant> v) {
+		static WhereAction::Condition::Variant flatten(std::variant<Column, Data::Variant> v) {
 			if(v.index() == 0)
 				return std::get<Column>(v);
 			else {
@@ -519,7 +519,7 @@ namespace sql {
 			}
 		}
 		// Function that extracts a Data::Variant from a where condition variant
-		static Data::Variant extractData(WhereTransaction::Condition::Variant v) {
+		static Data::Variant extractData(WhereAction::Condition::Variant v) {
 			switch(v.index()){
 			break; case 0: return {};
 			break; case 1: return std::get<bool>(v);
@@ -531,8 +531,8 @@ namespace sql {
 			}
 		}
 
-		// Struct representing a table query transaction
-		struct QueryTableTransaction: public WhereTransaction {
+		// Struct representing a table query action
+		struct QueryTableAction: public WhereAction {
 			struct TableAlias {
 				// The name of the table
 				std::string table;
@@ -556,20 +556,20 @@ namespace sql {
 			Wildcard<std::vector<std::string>> columns;
 		};
 
-		// Struct representing a transaction that updates some values in the table
-		struct UpdateTableTransaction: public WhereTransaction {
+		// Struct representing a action that updates some values in the table
+		struct UpdateTableAction: public WhereAction {
 			// Name of the column to be updated
 			std::string column;
 			// The value to update in that column
 			Data::Variant value;
 		};
 
-		// Struct representing a transaction that deletes some values from the table
-		struct DeleteFromTableTransaction: public WhereTransaction {};
+		// Struct representing a action that deletes some values from the table
+		struct DeleteFromTableAction: public WhereAction {};
 
 		// Memory backing for the enum name arrays
-		inline const std::array<std::string, Transaction::Action::MAX> Transaction::ActionNames = {"Invalid", "Use", "Create", "Drop", "Alter", "Insert", "Update", "Delete", "Query", "Add", "Remove"};
-		inline const std::array<std::string, Transaction::Target::MAX> Transaction::Target::TypeNames = {"Invalid", "Database", "Table", "Column"};
+		inline const std::array<std::string, Action::Action::MAX> Action::ActionNames = {"Invalid", "Use", "Create", "Drop", "Alter", "Insert", "Update", "Delete", "Query", "Add", "Remove"};
+		inline const std::array<std::string, Action::Target::MAX> Action::Target::TypeNames = {"Invalid", "Database", "Table", "Column"};
 	} // ast
 
 } // sql

@@ -16,6 +16,6 @@
 #include <iostream>
 
 // Function which parses a SQL command
-sql::ast::Transaction::ptr parseSQL(std::string command);
+sql::ast::Action::ptr parseSQL(std::string command);
 
 #endif // SQL_PARSER_HPP
